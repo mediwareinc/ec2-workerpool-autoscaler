@@ -1,6 +1,10 @@
 package internal
 
-import "github.com/caarlos0/env/v9"
+import (
+	"fmt"
+
+	"github.com/caarlos0/env/v9"
+)
 
 type RuntimeConfig struct {
 	SpaceliftAPIKeyID      string `env:"SPACELIFT_API_KEY_ID,notEmpty"`
@@ -14,7 +18,13 @@ type RuntimeConfig struct {
 	AutoscalingMaxKill        int    `env:"AUTOSCALING_MAX_KILL" envDefault:"1"`
 	AutoscalingMaxCreate      int    `env:"AUTOSCALING_MAX_CREATE" envDefault:"1"`
 
-	AutoscalingGroupARN string `env:"AUTOSCALING_GROUP_ARN,notEmpty"`
+	// AWS specific settings
+	AutoscalingGroupARN string `env:"AUTOSCALING_GROUP_ARN"`
+
+	// GCP specific settings
+	AutoscalingMIGProjectID string `env:"AUTOSCALING_MIG_PROJECT_ID"`
+	AutoscalingMIGZone      string `env:"AUTOSCALING_MIG_ZONE"` // Set if a zonal MIG is used, empty for regional MIGs
+	AutoscalingMIGName      string `env:"AUTOSCALING_MIG_NAME"`
 }
 
 // Parse parses environment variables into the RuntimeConfig.
@@ -24,5 +34,28 @@ func (c *RuntimeConfig) Parse(envVars map[string]string) error {
 	opts := env.Options{
 		Environment: envVars,
 	}
-	return env.ParseWithOptions(c, opts)
+	if err := env.ParseWithOptions(c, opts); err != nil {
+		return err
+	}
+	return c.Validate()
+}
+
+// Validate checks that the configuration is valid based on platform-specific requirements.
+func (c *RuntimeConfig) Validate() error {
+	// When platform is "aws", AutoscalingGroupARN must be set
+	if c.AutoscalingPlatform == "aws" && c.AutoscalingGroupARN == "" {
+		return fmt.Errorf("AUTOSCALING_GROUP_ARN is required when AUTOSCALING_PLATFORM is 'aws'")
+	}
+
+	// When platform is "gcp", GCP-specific fields must be set (except MIGZone which is optional)
+	if c.AutoscalingPlatform == "gcp" {
+		if c.AutoscalingMIGProjectID == "" {
+			return fmt.Errorf("AUTOSCALING_MIG_PROJECT_ID is required when AUTOSCALING_PLATFORM is 'gcp'")
+		}
+		if c.AutoscalingMIGName == "" {
+			return fmt.Errorf("AUTOSCALING_MIG_NAME is required when AUTOSCALING_PLATFORM is 'gcp'")
+		}
+	}
+
+	return nil
 }

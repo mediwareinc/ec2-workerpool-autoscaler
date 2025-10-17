@@ -239,6 +239,93 @@ func TestRuntimeConfig_Parse(t *testing.T) {
 				assert.Equal(t, 200, cfg.AutoscalingMaxCreate)
 			},
 		},
+		{
+			name: "does not require AUTOSCALING_GROUP_ARN when platform is not aws",
+			envVars: map[string]string{
+				"SPACELIFT_API_KEY_ID":          "test-key-id",
+				"SPACELIFT_API_KEY_SECRET_NAME": "test-secret-name",
+				"SPACELIFT_API_KEY_ENDPOINT":    "https://test.app.spacelift.io",
+				"SPACELIFT_WORKER_POOL_ID":      "test-pool-id",
+				"AUTOSCALING_REGION":            "us-central1",
+				"AUTOSCALING_PLATFORM":          "gcp",
+				"AUTOSCALING_MIG_PROJECT_ID":    "my-project",
+				"AUTOSCALING_MIG_NAME":          "my-mig",
+			},
+			expectError: false,
+			validate: func(t *testing.T, cfg internal.RuntimeConfig) {
+				assert.Equal(t, "gcp", cfg.AutoscalingPlatform)
+				assert.Equal(t, "", cfg.AutoscalingGroupARN, "AutoscalingGroupARN should be empty for GCP")
+				assert.Equal(t, "my-project", cfg.AutoscalingMIGProjectID)
+				assert.Equal(t, "my-mig", cfg.AutoscalingMIGName)
+			},
+		},
+		{
+			name: "fails when AUTOSCALING_MIG_PROJECT_ID is missing for gcp platform",
+			envVars: map[string]string{
+				"SPACELIFT_API_KEY_ID":          "test-key-id",
+				"SPACELIFT_API_KEY_SECRET_NAME": "test-secret-name",
+				"SPACELIFT_API_KEY_ENDPOINT":    "https://test.app.spacelift.io",
+				"SPACELIFT_WORKER_POOL_ID":      "test-pool-id",
+				"AUTOSCALING_REGION":            "us-central1",
+				"AUTOSCALING_PLATFORM":          "gcp",
+				"AUTOSCALING_MIG_NAME":          "my-mig",
+			},
+			expectError: true,
+		},
+		{
+			name: "fails when AUTOSCALING_MIG_NAME is missing for gcp platform",
+			envVars: map[string]string{
+				"SPACELIFT_API_KEY_ID":          "test-key-id",
+				"SPACELIFT_API_KEY_SECRET_NAME": "test-secret-name",
+				"SPACELIFT_API_KEY_ENDPOINT":    "https://test.app.spacelift.io",
+				"SPACELIFT_WORKER_POOL_ID":      "test-pool-id",
+				"AUTOSCALING_REGION":            "us-central1",
+				"AUTOSCALING_PLATFORM":          "gcp",
+				"AUTOSCALING_MIG_PROJECT_ID":    "my-project",
+			},
+			expectError: true,
+		},
+		{
+			name: "does not require AUTOSCALING_MIG_ZONE for gcp platform (regional MIG)",
+			envVars: map[string]string{
+				"SPACELIFT_API_KEY_ID":          "test-key-id",
+				"SPACELIFT_API_KEY_SECRET_NAME": "test-secret-name",
+				"SPACELIFT_API_KEY_ENDPOINT":    "https://test.app.spacelift.io",
+				"SPACELIFT_WORKER_POOL_ID":      "test-pool-id",
+				"AUTOSCALING_REGION":            "us-central1",
+				"AUTOSCALING_PLATFORM":          "gcp",
+				"AUTOSCALING_MIG_PROJECT_ID":    "my-project",
+				"AUTOSCALING_MIG_NAME":          "my-regional-mig",
+			},
+			expectError: false,
+			validate: func(t *testing.T, cfg internal.RuntimeConfig) {
+				assert.Equal(t, "gcp", cfg.AutoscalingPlatform)
+				assert.Equal(t, "my-project", cfg.AutoscalingMIGProjectID)
+				assert.Equal(t, "my-regional-mig", cfg.AutoscalingMIGName)
+				assert.Equal(t, "", cfg.AutoscalingMIGZone, "AutoscalingMIGZone should be empty for regional MIG")
+			},
+		},
+		{
+			name: "parses AUTOSCALING_MIG_ZONE when provided for gcp platform (zonal MIG)",
+			envVars: map[string]string{
+				"SPACELIFT_API_KEY_ID":          "test-key-id",
+				"SPACELIFT_API_KEY_SECRET_NAME": "test-secret-name",
+				"SPACELIFT_API_KEY_ENDPOINT":    "https://test.app.spacelift.io",
+				"SPACELIFT_WORKER_POOL_ID":      "test-pool-id",
+				"AUTOSCALING_REGION":            "us-central1",
+				"AUTOSCALING_PLATFORM":          "gcp",
+				"AUTOSCALING_MIG_PROJECT_ID":    "my-project",
+				"AUTOSCALING_MIG_NAME":          "my-zonal-mig",
+				"AUTOSCALING_MIG_ZONE":          "us-central1-a",
+			},
+			expectError: false,
+			validate: func(t *testing.T, cfg internal.RuntimeConfig) {
+				assert.Equal(t, "gcp", cfg.AutoscalingPlatform)
+				assert.Equal(t, "my-project", cfg.AutoscalingMIGProjectID)
+				assert.Equal(t, "my-zonal-mig", cfg.AutoscalingMIGName)
+				assert.Equal(t, "us-central1-a", cfg.AutoscalingMIGZone)
+			},
+		},
 	}
 
 	for _, tt := range tests {
