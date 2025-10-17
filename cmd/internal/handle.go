@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/caarlos0/env/v9"
 	"golang.org/x/exp/slog"
 
 	"github.com/spacelift-io/awsautoscalr/internal"
@@ -12,7 +11,7 @@ import (
 
 func Handle(ctx context.Context, logger *slog.Logger) error {
 	var cfg internal.RuntimeConfig
-	if err := env.Parse(&cfg); err != nil {
+	if err := cfg.Parse(nil); err != nil {
 		return fmt.Errorf("could not parse environment variables: %w", err)
 	}
 
