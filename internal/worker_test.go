@@ -35,7 +35,7 @@ func TestWorker(t *testing.T) {
 				})
 			})
 
-			g.Describe("with valid metadata", func() {
+			g.Describe("with valid AWS metadata", func() {
 				g.BeforeEach(func() {
 					sut.Metadata = `{"asg_id": "group", "instance_id": "instance"}`
 				})
@@ -44,6 +44,30 @@ func TestWorker(t *testing.T) {
 					Expect(err).NotTo(HaveOccurred())
 					Expect(groupID).To(Equal(internal.GroupID("group")))
 					Expect(instanceID).To(Equal(internal.InstanceID("instance")))
+				})
+			})
+
+			g.Describe("with valid GCP metadata", func() {
+				g.BeforeEach(func() {
+					sut.Metadata = `{"cloud_provider": "gcp", "gcp_mig_id": "gcp-group", "gcp_instance_id": "gcp-instance"}`
+				})
+
+				g.It("should return the GCP group and instance IDs", func() {
+					Expect(err).NotTo(HaveOccurred())
+					Expect(groupID).To(Equal(internal.GroupID("gcp-group")))
+					Expect(instanceID).To(Equal(internal.InstanceID("gcp-instance")))
+				})
+			})
+
+			g.Describe("with GCP cloud provider but missing GCP metadata", func() {
+				g.BeforeEach(func() {
+					sut.Metadata = `{"cloud_provider": "gcp"}`
+				})
+
+				g.It("should return an error for missing GCP fields", func() {
+					Expect(err).To(HaveOccurred())
+					Expect(err.Error()).To(ContainSubstring("metadata gcp_mig_id not present"))
+					Expect(err.Error()).To(ContainSubstring("metadata gcp_instance_id not present"))
 				})
 			})
 		})

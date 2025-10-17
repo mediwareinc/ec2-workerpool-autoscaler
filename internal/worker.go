@@ -9,6 +9,12 @@ import (
 const (
 	asgKey      = "asg_id"
 	instanceKey = "instance_id"
+
+	gcpMigKey      = "gcp_mig_id"
+	gcpInstanceKey = "gcp_instance_id"
+
+	cloudProviderKey = "cloud_provider"
+	cloudProviderGCP = "gcp"
 )
 
 type GroupID string
@@ -26,8 +32,18 @@ type Worker struct {
 }
 
 func (w *Worker) InstanceIdentity() (GroupID, InstanceID, error) {
-	groupID, groupErr := w.metadataValue(asgKey)
-	instanceID, instanceErr := w.metadataValue(instanceKey)
+	// Determine which keys to use based on cloud provider
+	groupKey := asgKey
+	instanceKeyToUse := instanceKey
+
+	// Check if cloud_provider is set to GCP
+	if cloudProvider, _ := w.metadataValue(cloudProviderKey); cloudProvider == cloudProviderGCP {
+		groupKey = gcpMigKey
+		instanceKeyToUse = gcpInstanceKey
+	}
+
+	groupID, groupErr := w.metadataValue(groupKey)
+	instanceID, instanceErr := w.metadataValue(instanceKeyToUse)
 	return GroupID(groupID), InstanceID(instanceID), errors.Join(groupErr, instanceErr)
 }
 
