@@ -10,9 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
-	autoscalingtypes "github.com/aws/aws-sdk-go-v2/service/autoscaling/types"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
-	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/aws/aws-xray-sdk-go/instrumentation/awsv2"
 	"github.com/aws/aws-xray-sdk-go/xray"
@@ -99,7 +97,7 @@ func NewController(ctx context.Context, cfg *RuntimeConfig) (*Controller, error)
 
 // DescribeInstances returns the details of the given instances from AWS,
 // making sure that the instances are valid for further processing.
-func (c *Controller) DescribeInstances(ctx context.Context, instanceIDs []string) (instances []ec2types.Instance, err error) {
+func (c *Controller) DescribeInstances(ctx context.Context, instanceIDs []string) (instances []Instance, err error) {
 	xray.Capture(ctx, "aws.ec2.describeInstances", func(ctx context.Context) error {
 		var output *ec2.DescribeInstancesOutput
 
@@ -124,7 +122,10 @@ func (c *Controller) DescribeInstances(ctx context.Context, instanceIDs []string
 					return err
 				}
 
-				instances = append(instances, instance)
+				instances = append(instances, Instance{
+					InstanceID: *instance.InstanceId,
+					LaunchTime: *instance.LaunchTime,
+				})
 			}
 		}
 
@@ -138,7 +139,7 @@ func (c *Controller) DescribeInstances(ctx context.Context, instanceIDs []string
 //
 // It makes sure that the autoscaling group exists and that there is only
 // one autoscaling group with the given name.
-func (c *Controller) GetAutoscalingGroup(ctx context.Context) (out *autoscalingtypes.AutoScalingGroup, err error) {
+func (c *Controller) GetAutoscalingGroup(ctx context.Context) (out *AutoScalingGroup, err error) {
 	xray.Capture(ctx, "aws.asg.get", func(ctx context.Context) error {
 		var output *autoscaling.DescribeAutoScalingGroupsOutput
 
@@ -159,7 +160,23 @@ func (c *Controller) GetAutoscalingGroup(ctx context.Context) (out *autoscalingt
 			return err
 		}
 
-		out = &output.AutoScalingGroups[0]
+		asg := &output.AutoScalingGroups[0]
+
+		// Convert AWS-specific ASG to generic ASG
+		out = &AutoScalingGroup{
+			Name:            *asg.AutoScalingGroupName,
+			MinSize:         *asg.MinSize,
+			MaxSize:         *asg.MaxSize,
+			DesiredCapacity: *asg.DesiredCapacity,
+			Instances:       make([]Instance, 0, len(asg.Instances)),
+		}
+
+		for _, instance := range asg.Instances {
+			out.Instances = append(out.Instances, Instance{
+				InstanceID:     *instance.InstanceId,
+				LifecycleState: string(instance.LifecycleState),
+			})
+		}
 
 		return nil
 	})

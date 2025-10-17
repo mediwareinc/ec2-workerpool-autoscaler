@@ -2,13 +2,13 @@ package internal_test
 
 import (
 	"encoding/json"
-	"github.com/aws/aws-sdk-go-v2/service/autoscaling/types"
+	"testing"
+	"time"
+
 	"github.com/franela/goblin"
 	. "github.com/onsi/gomega"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"testing"
-	"time"
 
 	"github.com/spacelift-io/awsautoscalr/internal"
 )
@@ -18,14 +18,14 @@ func TestState_StrayInstances(t *testing.T) {
 	const instanceID = "instance-id"
 	const failedToTerminateInstanceID = "instance-id2"
 	cfg := internal.RuntimeConfig{}
-	asg := &types.AutoScalingGroup{
-		AutoScalingGroupName: nullable(asgName),
-		MinSize:              nullable(int32(1)),
-		MaxSize:              nullable(int32(5)),
-		DesiredCapacity:      nullable(int32(3)),
-		Instances: []types.Instance{
+	asg := &internal.AutoScalingGroup{
+		Name:            asgName,
+		MinSize:         1,
+		MaxSize:         5,
+		DesiredCapacity: 3,
+		Instances: []internal.Instance{
 			{
-				InstanceId: nullable(instanceID),
+				InstanceID: instanceID,
 			},
 		},
 	}
@@ -59,7 +59,7 @@ func TestState(t *testing.T) {
 	RegisterFailHandler(func(m string, _ ...int) { g.Fail(m) })
 
 	g.Describe("State", func() {
-		var asg *types.AutoScalingGroup
+		var asg *internal.AutoScalingGroup
 		var workerPool *internal.WorkerPool
 		var cfg internal.RuntimeConfig
 
@@ -71,11 +71,11 @@ func TestState(t *testing.T) {
 			var err error
 
 			g.BeforeEach(func() {
-				asg = &types.AutoScalingGroup{
-					AutoScalingGroupName: nullable(asgName),
-					MinSize:              nullable(int32(1)),
-					MaxSize:              nullable(int32(5)),
-					DesiredCapacity:      nullable(int32(3)),
+				asg = &internal.AutoScalingGroup{
+					Name:            asgName,
+					MinSize:         1,
+					MaxSize:         5,
+					DesiredCapacity: 3,
 				}
 				workerPool = &internal.WorkerPool{}
 				cfg = internal.RuntimeConfig{}
@@ -85,7 +85,7 @@ func TestState(t *testing.T) {
 
 			g.Describe("when the ASG is invalid", func() {
 				g.Describe("when the name is not set", func() {
-					g.BeforeEach(func() { asg.AutoScalingGroupName = nil })
+					g.BeforeEach(func() { asg.Name = "" })
 
 					g.It("should return an error", func() {
 						Expect(err).To(MatchError("ASG name is not set"))
@@ -93,7 +93,7 @@ func TestState(t *testing.T) {
 				})
 
 				g.Describe("when the minimum size is not set", func() {
-					g.BeforeEach(func() { asg.MinSize = nil })
+					g.BeforeEach(func() { asg.MinSize = -1 })
 
 					g.It("should return an error", func() {
 						Expect(err).To(MatchError("ASG minimum size is not set"))
@@ -101,7 +101,7 @@ func TestState(t *testing.T) {
 				})
 
 				g.Describe("when the maximum size is not set", func() {
-					g.BeforeEach(func() { asg.MaxSize = nil })
+					g.BeforeEach(func() { asg.MaxSize = -1 })
 
 					g.It("should return an error", func() {
 						Expect(err).To(MatchError("ASG maximum size is not set"))
@@ -109,7 +109,7 @@ func TestState(t *testing.T) {
 				})
 
 				g.Describe("when the desired capacity is not set", func() {
-					g.BeforeEach(func() { asg.DesiredCapacity = nil })
+					g.BeforeEach(func() { asg.DesiredCapacity = -1 })
 
 					g.It("should return an error", func() {
 						Expect(err).To(MatchError("ASG desired capacity is not set"))
@@ -155,9 +155,9 @@ func TestState(t *testing.T) {
 				var instanceIDs []string
 
 				g.BeforeEach(func() {
-					asg.Instances = []types.Instance{{
-						InstanceId:     nullable(instanceID),
-						LifecycleState: types.LifecycleStateInService,
+					asg.Instances = []internal.Instance{{
+						InstanceID:     instanceID,
+						LifecycleState: "InService",
 					}}
 				})
 
@@ -171,7 +171,7 @@ func TestState(t *testing.T) {
 					})
 
 					g.Describe("when the ASG instance is not in service", func() {
-						g.BeforeEach(func() { asg.Instances[0].LifecycleState = types.LifecycleStateTerminating })
+						g.BeforeEach(func() { asg.Instances[0].LifecycleState = "Terminating" })
 
 						g.It("should return an empty collection", func() {
 							Expect(instanceIDs).To(BeEmpty())
@@ -240,17 +240,11 @@ func TestState(t *testing.T) {
 				maxCreate = 2
 				maxKill = 2
 
-				asg = &types.AutoScalingGroup{
-					MinSize: nullable(int32(0)),
-					MaxSize: nullable(int32(2)),
-				}
-				workerPool = &internal.WorkerPool{}
-
-				asg = &types.AutoScalingGroup{
-					AutoScalingGroupName: nullable("asg-name"),
-					MinSize:              nullable(int32(1)),
-					MaxSize:              nullable(int32(2)),
-					DesiredCapacity:      nullable(int32(2)),
+				asg = &internal.AutoScalingGroup{
+					Name:            "asg-name",
+					MinSize:         1,
+					MaxSize:         2,
+					DesiredCapacity: 2,
 				}
 				workerPool = &internal.WorkerPool{}
 				cfg = internal.RuntimeConfig{
@@ -279,7 +273,7 @@ func TestState(t *testing.T) {
 					})
 
 					g.Describe("when there are instances", func() {
-						g.BeforeEach(func() { asg.Instances = []types.Instance{{}} })
+						g.BeforeEach(func() { asg.Instances = []internal.Instance{{}} })
 
 						g.It("should not scale because the system is not in balance", func() {
 							Expect(decision.ScalingDirection).To(Equal(internal.ScalingDirectionNone))
@@ -296,7 +290,7 @@ func TestState(t *testing.T) {
 
 					g.Describe("when the ASG is already at maximum size", func() {
 						g.BeforeEach(func() {
-							asg.Instances = []types.Instance{{}, {}}
+							asg.Instances = []internal.Instance{{}, {}}
 							workerPool.Workers = []internal.Worker{{}, {}}
 						})
 
@@ -310,7 +304,7 @@ func TestState(t *testing.T) {
 					})
 
 					g.Describe("when the ASG is not at maximum size", func() {
-						g.BeforeEach(func() { asg.DesiredCapacity = nullable(int32(0)) })
+						g.BeforeEach(func() { asg.DesiredCapacity = 0 })
 
 						g.Describe("when constrained by maxCreate", func() {
 							g.BeforeEach(func() { maxCreate = 1 })
@@ -329,7 +323,7 @@ func TestState(t *testing.T) {
 							g.BeforeEach(func() { maxCreate = 10 })
 
 							g.Describe("when not constrained by max ASG size", func() {
-								g.BeforeEach(func() { asg.MaxSize = nullable(int32(10)) })
+								g.BeforeEach(func() { asg.MaxSize = 10 })
 
 								g.It("scales up by 5", func() {
 									Expect(decision.ScalingDirection).To(Equal(internal.ScalingDirectionUp))
@@ -339,7 +333,7 @@ func TestState(t *testing.T) {
 							})
 
 							g.Describe("when constrained by max ASG size", func() {
-								g.BeforeEach(func() { asg.MaxSize = nullable(int32(2)) })
+								g.BeforeEach(func() { asg.MaxSize = 2 })
 
 								g.It("scales up by 2", func() {
 									Expect(decision.ScalingDirection).To(Equal(internal.ScalingDirectionUp))
@@ -355,14 +349,14 @@ func TestState(t *testing.T) {
 
 				g.Describe("when there are no pending runs (scaling down scenarios)", func() {
 					g.BeforeEach(func() {
-						asg.DesiredCapacity = nullable(int32(2))
-						asg.Instances = []types.Instance{{}, {}}
-						asg.MaxSize = nullable(int32(10))
+						asg.DesiredCapacity = 2
+						asg.Instances = []internal.Instance{{}, {}}
+						asg.MaxSize = 10
 						workerPool.Workers = []internal.Worker{{}, {}}
 					})
 
 					g.Describe("when the ASG is already at minimum size", func() {
-						g.BeforeEach(func() { asg.MinSize = nullable(int32(2)) })
+						g.BeforeEach(func() { asg.MinSize = 2 })
 
 						g.It("should not scale because the system is at minimum size", func() {
 							Expect(decision.ScalingDirection).To(Equal(internal.ScalingDirectionNone))
@@ -374,7 +368,7 @@ func TestState(t *testing.T) {
 					})
 
 					g.Describe("when the ASG is not at minimum size", func() {
-						g.BeforeEach(func() { asg.MinSize = nullable(int32(0)) })
+						g.BeforeEach(func() { asg.MinSize = 0 })
 
 						g.Describe("when constrained by maxKill", func() {
 							g.BeforeEach(func() { maxKill = 1 })
@@ -393,7 +387,7 @@ func TestState(t *testing.T) {
 							g.BeforeEach(func() { maxKill = 10 })
 
 							g.Describe("when constrained by min ASG size", func() {
-								g.BeforeEach(func() { asg.MinSize = nullable(int32(1)) })
+								g.BeforeEach(func() { asg.MinSize = 1 })
 
 								g.It("scales down by 1", func() {
 									Expect(decision.ScalingDirection).To(Equal(internal.ScalingDirectionDown))
@@ -406,7 +400,7 @@ func TestState(t *testing.T) {
 							})
 
 							g.Describe("when not constrained by min ASG size", func() {
-								g.BeforeEach(func() { asg.MinSize = nullable(int32(0)) })
+								g.BeforeEach(func() { asg.MinSize = 0 })
 
 								g.It("scales down by 2", func() {
 									Expect(decision.ScalingDirection).To(Equal(internal.ScalingDirectionDown))

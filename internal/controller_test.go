@@ -56,7 +56,7 @@ func TestController(t *testing.T) {
 		g.Describe("DescribeInstances", func() {
 			instanceIDs := []string{"i-1"}
 
-			var instances []ec2types.Instance
+			var instances []internal.Instance
 
 			var input *ec2.DescribeInstancesInput
 			var apiCall *mock.Call
@@ -136,7 +136,7 @@ func TestController(t *testing.T) {
 		})
 
 		g.Describe("GetAutoscalingGroup", func() {
-			var group *autoscalingtypes.AutoScalingGroup
+			var group *internal.AutoScalingGroup
 
 			var input *autoscaling.DescribeAutoScalingGroupsInput
 			var apiCall *mock.Call
@@ -200,11 +200,23 @@ func TestController(t *testing.T) {
 				})
 
 				g.Describe("when it returns a single group", func() {
-					g.BeforeEach(func() { output.AutoScalingGroups = []autoscalingtypes.AutoScalingGroup{{}} })
+					g.BeforeEach(func() {
+						output.AutoScalingGroups = []autoscalingtypes.AutoScalingGroup{{
+							AutoScalingGroupName: nullable(asgName),
+							MinSize:              nullable(int32(1)),
+							MaxSize:              nullable(int32(5)),
+							DesiredCapacity:      nullable(int32(3)),
+							Instances:            []autoscalingtypes.Instance{},
+						}}
+					})
 
 					g.It("should return the group", func() {
 						Expect(err).NotTo(HaveOccurred())
 						Expect(group).NotTo(BeNil())
+						Expect(group.Name).To(Equal(asgName))
+						Expect(group.MinSize).To(Equal(int32(1)))
+						Expect(group.MaxSize).To(Equal(int32(5)))
+						Expect(group.DesiredCapacity).To(Equal(int32(3)))
 					})
 				})
 			})
