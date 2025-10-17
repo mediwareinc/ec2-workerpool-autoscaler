@@ -20,6 +20,9 @@ type Worker struct {
 	CreatedAt int32  `graphql:"createdAt" json:"createdAt"`
 	Drained   bool   `graphql:"drained" json:"drained"`
 	Metadata  string `graphql:"metadata" json:"metadata"`
+
+	// parsedMetadata caches the unmarshaled metadata to avoid repeated parsing
+	parsedMetadata map[string]string
 }
 
 func (w *Worker) InstanceIdentity() (GroupID, InstanceID, error) {
@@ -29,11 +32,19 @@ func (w *Worker) InstanceIdentity() (GroupID, InstanceID, error) {
 }
 
 func (w *Worker) metadata() (map[string]string, error) {
+	// Return cached metadata if available
+	if w.parsedMetadata != nil {
+		return w.parsedMetadata, nil
+	}
+
 	out := make(map[string]string)
 
 	if err := json.Unmarshal([]byte(w.Metadata), &out); err != nil {
 		return nil, fmt.Errorf("invalid instance metadata: %w", err)
 	}
+
+	// Cache the parsed metadata
+	w.parsedMetadata = out
 
 	return out, nil
 }
