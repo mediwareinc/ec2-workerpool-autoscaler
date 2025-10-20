@@ -10,7 +10,7 @@ const (
 	asgKey      = "asg_id"
 	instanceKey = "instance_id"
 
-	gcpMigKey      = "gcp_mig_id"
+	gcpMigKey      = "gcp_mig_name"
 	gcpInstanceKey = "gcp_instance_id"
 
 	cloudProviderKey = "cloud_provider"
