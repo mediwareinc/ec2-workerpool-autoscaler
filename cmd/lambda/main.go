@@ -7,17 +7,18 @@ import (
 
 	"github.com/aws/aws-lambda-go/lambda"
 	"github.com/aws/aws-lambda-go/lambdacontext"
-	"github.com/aws/aws-xray-sdk-go/xray"
 	"golang.org/x/exp/slog"
 
 	"github.com/spacelift-io/awsautoscalr/cmd/internal"
+	appinternal "github.com/spacelift-io/awsautoscalr/internal"
 )
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
 	lambda.Start(func(ctx context.Context) error {
-		if err := xray.Configure(xray.Config{ServiceVersion: "1.2.3"}); err != nil {
+		tracer := appinternal.NewXRayTracer()
+		if err := tracer.Configure(appinternal.TracerConfig{ServiceVersion: "1.2.3"}); err != nil {
 			return fmt.Errorf("could not configure X-Ray: %w", err)
 		}
 
@@ -26,6 +27,6 @@ func main() {
 			logger = logger.With("aws_request_id", lc.AwsRequestID)
 		}
 
-		return internal.Handle(ctx, logger)
+		return internal.Handle(ctx, logger, tracer)
 	})
 }

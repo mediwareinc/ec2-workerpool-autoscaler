@@ -13,7 +13,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/aws/aws-xray-sdk-go/instrumentation/awsv2"
-	"github.com/aws/aws-xray-sdk-go/xray"
 	"github.com/shurcooL/graphql"
 	spacelift "github.com/spacelift-io/spacectl/client"
 	"github.com/spacelift-io/spacectl/client/session"
@@ -33,10 +32,13 @@ type Controller struct {
 	// Configuration.
 	AWSAutoscalingGroupName string
 	SpaceliftWorkerPoolID   string
+
+	// Tracer for distributed tracing.
+	Tracer Tracer
 }
 
 // NewController creates a new controller instance.
-func NewController(ctx context.Context, cfg *RuntimeConfig) (*Controller, error) {
+func NewController(ctx context.Context, cfg *RuntimeConfig, tracer Tracer) (*Controller, error) {
 	awsConfig, err := config.LoadDefaultConfig(ctx, config.WithRegion(cfg.AutoscalingRegion))
 	if err != nil {
 		return nil, fmt.Errorf("could not load AWS configuration: %w", err)
@@ -47,7 +49,7 @@ func NewController(ctx context.Context, cfg *RuntimeConfig) (*Controller, error)
 	ssmClient := ssm.NewFromConfig(awsConfig)
 	var output *ssm.GetParameterOutput
 
-	xray.Capture(ctx, "aws.ssm.secret", func(ctx context.Context) error {
+	tracer.Capture(ctx, "aws.ssm.secret", func(ctx context.Context) error {
 		output, err = ssmClient.GetParameter(ctx, &ssm.GetParameterInput{
 			Name:           aws.String(cfg.SpaceliftAPISecretName),
 			WithDecryption: aws.Bool(true),
@@ -65,9 +67,9 @@ func NewController(ctx context.Context, cfg *RuntimeConfig) (*Controller, error)
 	}
 
 	var slSession session.Session
-	httpClient := xray.Client(nil)
+	httpClient := tracer.Client(nil)
 
-	xray.Capture(ctx, "spacelift.session.get", func(ctx context.Context) error {
+	tracer.Capture(ctx, "spacelift.session.get", func(ctx context.Context) error {
 		slSession, err = session.FromAPIKey(ctx, httpClient)(
 			cfg.SpaceliftAPIEndpoint,
 			cfg.SpaceliftAPIKeyID,
@@ -92,13 +94,14 @@ func NewController(ctx context.Context, cfg *RuntimeConfig) (*Controller, error)
 		Spacelift:               spacelift.New(httpClient, slSession),
 		AWSAutoscalingGroupName: arnParts[1],
 		SpaceliftWorkerPoolID:   cfg.SpaceliftWorkerPoolID,
+		Tracer:                  tracer,
 	}, nil
 }
 
 // DescribeInstances returns the details of the given instances from AWS,
 // making sure that the instances are valid for further processing.
 func (c *Controller) DescribeInstances(ctx context.Context, instanceIDs []string) (instances []Instance, err error) {
-	xray.Capture(ctx, "aws.ec2.describeInstances", func(ctx context.Context) error {
+	c.Tracer.Capture(ctx, "aws.ec2.describeInstances", func(ctx context.Context) error {
 		var output *ec2.DescribeInstancesOutput
 
 		output, err = c.EC2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
@@ -140,7 +143,7 @@ func (c *Controller) DescribeInstances(ctx context.Context, instanceIDs []string
 // It makes sure that the autoscaling group exists and that there is only
 // one autoscaling group with the given name.
 func (c *Controller) GetAutoscalingGroup(ctx context.Context) (out *AutoScalingGroup, err error) {
-	xray.Capture(ctx, "aws.asg.get", func(ctx context.Context) error {
+	c.Tracer.Capture(ctx, "aws.asg.get", func(ctx context.Context) error {
 		var output *autoscaling.DescribeAutoScalingGroupsOutput
 
 		output, err = c.Autoscaling.DescribeAutoScalingGroups(ctx, &autoscaling.DescribeAutoScalingGroupsInput{
@@ -186,7 +189,7 @@ func (c *Controller) GetAutoscalingGroup(ctx context.Context) (out *AutoScalingG
 
 // GetWorkerPool returns the worker pool details from Spacelift.
 func (c *Controller) GetWorkerPool(ctx context.Context) (out *WorkerPool, err error) {
-	xray.Capture(ctx, "spacelift.workerpool.get", func(ctx context.Context) error {
+	c.Tracer.Capture(ctx, "spacelift.workerpool.get", func(ctx context.Context) error {
 		var wpDetails WorkerPoolDetails
 
 		if err = c.Spacelift.Query(ctx, &wpDetails, map[string]any{"workerPool": c.SpaceliftWorkerPoolID}); err != nil {
@@ -221,8 +224,8 @@ func (c *Controller) GetWorkerPool(ctx context.Context) (out *WorkerPool, err er
 			return wpDetails.Pool.Workers[i].CreatedAt < wpDetails.Pool.Workers[j].CreatedAt
 		})
 
-		xray.AddMetadata(ctx, "workers", len(wpDetails.Pool.Workers))
-		xray.AddMetadata(ctx, "pending_runs", wpDetails.Pool.PendingRuns)
+		c.Tracer.AddMetadata(ctx, "workers", len(wpDetails.Pool.Workers))
+		c.Tracer.AddMetadata(ctx, "pending_runs", wpDetails.Pool.PendingRuns)
 
 		out = wpDetails.Pool
 
@@ -234,8 +237,8 @@ func (c *Controller) GetWorkerPool(ctx context.Context) (out *WorkerPool, err er
 
 // Drain worker drains a worker in the Spacelift worker pool.
 func (c *Controller) DrainWorker(ctx context.Context, workerID string) (drained bool, err error) {
-	xray.Capture(ctx, "spacelift.worker.drain", func(ctx context.Context) error {
-		xray.AddAnnotation(ctx, "worker_id", workerID)
+	c.Tracer.Capture(ctx, "spacelift.worker.drain", func(ctx context.Context) error {
+		c.Tracer.AddAnnotation(ctx, "worker_id", workerID)
 
 		var worker *Worker
 
@@ -244,9 +247,9 @@ func (c *Controller) DrainWorker(ctx context.Context, workerID string) (drained 
 			return err
 		}
 
-		xray.AddMetadata(ctx, "worker_id", worker.ID)
-		xray.AddMetadata(ctx, "worker_busy", worker.Busy)
-		xray.AddMetadata(ctx, "worker_drained", worker.Drained)
+		c.Tracer.AddMetadata(ctx, "worker_id", worker.ID)
+		c.Tracer.AddMetadata(ctx, "worker_busy", worker.Busy)
+		c.Tracer.AddMetadata(ctx, "worker_drained", worker.Drained)
 
 		// If the worker is not busy, our job here is done.
 		if !worker.Busy {
@@ -266,8 +269,8 @@ func (c *Controller) DrainWorker(ctx context.Context, workerID string) (drained 
 }
 
 func (c *Controller) KillInstance(ctx context.Context, instanceID string) (err error) {
-	xray.Capture(ctx, "aws.killinstance", func(ctx context.Context) error {
-		xray.AddAnnotation(ctx, "instance_id", instanceID)
+	c.Tracer.Capture(ctx, "aws.killinstance", func(ctx context.Context) error {
+		c.Tracer.AddAnnotation(ctx, "instance_id", instanceID)
 
 		_, err = c.Autoscaling.DetachInstances(ctx, &autoscaling.DetachInstancesInput{
 			AutoScalingGroupName:           aws.String(c.AWSAutoscalingGroupName),
@@ -306,8 +309,8 @@ func (c *Controller) KillInstance(ctx context.Context, instanceID string) (err e
 }
 
 func (c *Controller) ScaleUpASG(ctx context.Context, desiredCapacity int32) (err error) {
-	xray.Capture(ctx, "aws.asg.scaleup", func(ctx context.Context) error {
-		xray.AddMetadata(ctx, "desired_capacity", desiredCapacity)
+	c.Tracer.Capture(ctx, "aws.asg.scaleup", func(ctx context.Context) error {
+		c.Tracer.AddMetadata(ctx, "desired_capacity", desiredCapacity)
 
 		_, err = c.Autoscaling.SetDesiredCapacity(ctx, &autoscaling.SetDesiredCapacityInput{
 			AutoScalingGroupName: aws.String(c.AWSAutoscalingGroupName),
@@ -326,10 +329,10 @@ func (c *Controller) ScaleUpASG(ctx context.Context, desiredCapacity int32) (err
 }
 
 func (c *Controller) workerDrainSet(ctx context.Context, workerID string, drain bool) (worker *Worker, err error) {
-	xray.Capture(ctx, fmt.Sprintf("spacelift.worker.setdrain.%t", drain), func(ctx context.Context) error {
-		xray.AddAnnotation(ctx, "worker_id", workerID)
-		xray.AddAnnotation(ctx, "worker_pool_id", c.SpaceliftWorkerPoolID)
-		xray.AddAnnotation(ctx, "drain", drain)
+	c.Tracer.Capture(ctx, fmt.Sprintf("spacelift.worker.setdrain.%t", drain), func(ctx context.Context) error {
+		c.Tracer.AddAnnotation(ctx, "worker_id", workerID)
+		c.Tracer.AddAnnotation(ctx, "worker_pool_id", c.SpaceliftWorkerPoolID)
+		c.Tracer.AddAnnotation(ctx, "drain", drain)
 		var mutation WorkerDrainSet
 
 		variables := map[string]any{

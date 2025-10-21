@@ -50,6 +50,7 @@ func TestController(t *testing.T) {
 				Spacelift:               mockSpacelift,
 				AWSAutoscalingGroupName: asgName,
 				SpaceliftWorkerPoolID:   workerPoolID,
+				Tracer:                  internal.NewNoOpTracer(),
 			}
 		})
 
