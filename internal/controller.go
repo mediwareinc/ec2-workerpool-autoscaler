@@ -5,14 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strings"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/autoscaling"
-	"github.com/aws/aws-sdk-go-v2/service/ec2"
-	"github.com/aws/aws-sdk-go-v2/service/ssm"
-	"github.com/aws/aws-xray-sdk-go/instrumentation/awsv2"
 	"github.com/shurcooL/graphql"
 	spacelift "github.com/spacelift-io/spacectl/client"
 	"github.com/spacelift-io/spacectl/client/session"
@@ -21,49 +14,28 @@ import (
 )
 
 // Controller is responsible for handling interactions with external systems
-// (Spacelift API as well as AWS Autoscaling and EC2 APIs) so that the main
-// package can focus on the core logic.
+// (Spacelift API as well as cloud provider APIs) so that the main package
+// can focus on the core logic.
 type Controller struct {
-	// Clients.
-	Autoscaling ifaces.Autoscaling
-	EC2         ifaces.EC2
-	Spacelift   ifaces.Spacelift
+	// Cloud controller for cloud-specific operations.
+	Cloud CloudController
+
+	// Spacelift client.
+	Spacelift ifaces.Spacelift
 
 	// Configuration.
-	AWSAutoscalingGroupName string
-	SpaceliftWorkerPoolID   string
+	SpaceliftWorkerPoolID string
 
 	// Tracer for distributed tracing.
 	Tracer Tracer
 }
 
 // NewController creates a new controller instance.
-func NewController(ctx context.Context, cfg *RuntimeConfig, tracer Tracer) (*Controller, error) {
-	awsConfig, err := config.LoadDefaultConfig(ctx, config.WithRegion(cfg.AutoscalingRegion))
+func NewController(ctx context.Context, cfg *RuntimeConfig, cloudController CloudController, tracer Tracer) (*Controller, error) {
+	// Get Spacelift API key secret from the cloud controller
+	apiSecret, err := cloudController.GetSecret(ctx, cfg.SpaceliftAPISecretName)
 	if err != nil {
-		return nil, fmt.Errorf("could not load AWS configuration: %w", err)
-	}
-
-	awsv2.AWSV2Instrumentor(&awsConfig.APIOptions)
-
-	ssmClient := ssm.NewFromConfig(awsConfig)
-	var output *ssm.GetParameterOutput
-
-	tracer.Capture(ctx, "aws.ssm.secret", func(ctx context.Context) error {
-		output, err = ssmClient.GetParameter(ctx, &ssm.GetParameterInput{
-			Name:           aws.String(cfg.SpaceliftAPISecretName),
-			WithDecryption: aws.Bool(true),
-		})
-
-		return err
-	})
-
-	if err != nil {
-		return nil, fmt.Errorf("could not get Spacelift API key secret from SSM: %w", err)
-	} else if output.Parameter == nil {
-		return nil, errors.New("could not find Spacelift API key secret in SSM")
-	} else if output.Parameter.Value == nil {
-		return nil, errors.New("could not find Spacelift API key secret value in SSM")
+		return nil, fmt.Errorf("could not get Spacelift API key secret: %w", err)
 	}
 
 	var slSession session.Session
@@ -73,7 +45,7 @@ func NewController(ctx context.Context, cfg *RuntimeConfig, tracer Tracer) (*Con
 		slSession, err = session.FromAPIKey(ctx, httpClient)(
 			cfg.SpaceliftAPIEndpoint,
 			cfg.SpaceliftAPIKeyID,
-			*output.Parameter.Value,
+			apiSecret,
 		)
 
 		return err
@@ -83,108 +55,23 @@ func NewController(ctx context.Context, cfg *RuntimeConfig, tracer Tracer) (*Con
 		return nil, fmt.Errorf("could not create Spacelift session: %w", err)
 	}
 
-	arnParts := strings.Split(cfg.AutoscalingGroupARN, "/")
-	if len(arnParts) != 2 {
-		return nil, fmt.Errorf("could not parse autoscaling group ARN")
-	}
-
 	return &Controller{
-		Autoscaling:             autoscaling.NewFromConfig(awsConfig),
-		EC2:                     ec2.NewFromConfig(awsConfig),
-		Spacelift:               spacelift.New(httpClient, slSession),
-		AWSAutoscalingGroupName: arnParts[1],
-		SpaceliftWorkerPoolID:   cfg.SpaceliftWorkerPoolID,
-		Tracer:                  tracer,
+		Cloud:                 cloudController,
+		Spacelift:             spacelift.New(httpClient, slSession),
+		SpaceliftWorkerPoolID: cfg.SpaceliftWorkerPoolID,
+		Tracer:                tracer,
 	}, nil
 }
 
-// DescribeInstances returns the details of the given instances from AWS,
+// DescribeInstances returns the details of the given instances from the cloud provider,
 // making sure that the instances are valid for further processing.
 func (c *Controller) DescribeInstances(ctx context.Context, instanceIDs []string) (instances []Instance, err error) {
-	c.Tracer.Capture(ctx, "aws.ec2.describeInstances", func(ctx context.Context) error {
-		var output *ec2.DescribeInstancesOutput
-
-		output, err = c.EC2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
-			InstanceIds: instanceIDs,
-		})
-
-		if err != nil {
-			err = fmt.Errorf("could not describe instances: %w", err)
-			return err
-		}
-
-		for _, reservation := range output.Reservations {
-			for _, instance := range reservation.Instances {
-				if instance.InstanceId == nil {
-					err = errors.New("could not find instance ID")
-					return err
-				}
-
-				if instance.LaunchTime == nil {
-					err = fmt.Errorf("could not find launch time for instance %s", *instance.InstanceId)
-					return err
-				}
-
-				instances = append(instances, Instance{
-					InstanceID: *instance.InstanceId,
-					LaunchTime: *instance.LaunchTime,
-				})
-			}
-		}
-
-		return nil
-	})
-
-	return instances, err
+	return c.Cloud.DescribeInstances(ctx, instanceIDs)
 }
 
-// GetAutoscalingGroup returns the autoscaling group details from AWS.
-//
-// It makes sure that the autoscaling group exists and that there is only
-// one autoscaling group with the given name.
+// GetAutoscalingGroup returns the autoscaling group details from the cloud provider.
 func (c *Controller) GetAutoscalingGroup(ctx context.Context) (out *AutoScalingGroup, err error) {
-	c.Tracer.Capture(ctx, "aws.asg.get", func(ctx context.Context) error {
-		var output *autoscaling.DescribeAutoScalingGroupsOutput
-
-		output, err = c.Autoscaling.DescribeAutoScalingGroups(ctx, &autoscaling.DescribeAutoScalingGroupsInput{
-			AutoScalingGroupNames: []string{c.AWSAutoscalingGroupName},
-		})
-
-		if err != nil {
-			err = fmt.Errorf("could not get autoscaling group details: %w", err)
-			return err
-		}
-
-		if len(output.AutoScalingGroups) == 0 {
-			err = fmt.Errorf("could not find autoscaling group %s", c.AWSAutoscalingGroupName)
-			return err
-		} else if len(output.AutoScalingGroups) > 1 {
-			err = fmt.Errorf("found more than one autoscaling group with name %s", c.AWSAutoscalingGroupName)
-			return err
-		}
-
-		asg := &output.AutoScalingGroups[0]
-
-		// Convert AWS-specific ASG to generic ASG
-		out = &AutoScalingGroup{
-			Name:            *asg.AutoScalingGroupName,
-			MinSize:         *asg.MinSize,
-			MaxSize:         *asg.MaxSize,
-			DesiredCapacity: *asg.DesiredCapacity,
-			Instances:       make([]Instance, 0, len(asg.Instances)),
-		}
-
-		for _, instance := range asg.Instances {
-			out.Instances = append(out.Instances, Instance{
-				InstanceID:     *instance.InstanceId,
-				LifecycleState: string(instance.LifecycleState),
-			})
-		}
-
-		return nil
-	})
-
-	return
+	return c.Cloud.GetAutoscalingGroup(ctx)
 }
 
 // GetWorkerPool returns the worker pool details from Spacelift.
@@ -269,63 +156,11 @@ func (c *Controller) DrainWorker(ctx context.Context, workerID string) (drained 
 }
 
 func (c *Controller) KillInstance(ctx context.Context, instanceID string) (err error) {
-	c.Tracer.Capture(ctx, "aws.killinstance", func(ctx context.Context) error {
-		c.Tracer.AddAnnotation(ctx, "instance_id", instanceID)
-
-		_, err = c.Autoscaling.DetachInstances(ctx, &autoscaling.DetachInstancesInput{
-			AutoScalingGroupName:           aws.String(c.AWSAutoscalingGroupName),
-			InstanceIds:                    []string{instanceID},
-			ShouldDecrementDesiredCapacity: aws.Bool(true),
-		})
-
-		// A special instance of the error is when the instance is not part of
-		// the autoscaling group. This can happen when the instance successfully
-		// detached but for some reason the termination request failed.
-		//
-		// This will fix one-off errors and machines manually connected to the
-		// worker pool (as long as they terminate upon request), but if there
-		// are multiple ASGs connected to the same worker pool, this will be a
-		// common occurrence and will break the entire autoscaling logic.
-		if err != nil && !strings.Contains(err.Error(), "is not part of Auto Scaling group") {
-			err = fmt.Errorf("could not detach instance from autoscaling group: %v", err)
-			return err
-		}
-
-		// Now that the instance is detached from the ASG (or was never part of
-		// the ASG), we can terminate it.
-		_, err = c.EC2.TerminateInstances(ctx, &ec2.TerminateInstancesInput{
-			InstanceIds: []string{instanceID},
-		})
-
-		if err != nil {
-			err = fmt.Errorf("could not terminate detached instance: %v", err)
-			return err
-		}
-
-		return nil
-	})
-
-	return
+	return c.Cloud.KillInstance(ctx, instanceID)
 }
 
 func (c *Controller) ScaleUpASG(ctx context.Context, desiredCapacity int32) (err error) {
-	c.Tracer.Capture(ctx, "aws.asg.scaleup", func(ctx context.Context) error {
-		c.Tracer.AddMetadata(ctx, "desired_capacity", desiredCapacity)
-
-		_, err = c.Autoscaling.SetDesiredCapacity(ctx, &autoscaling.SetDesiredCapacityInput{
-			AutoScalingGroupName: aws.String(c.AWSAutoscalingGroupName),
-			DesiredCapacity:      aws.Int32(int32(desiredCapacity)),
-		})
-
-		if err != nil {
-			err = fmt.Errorf("could not set desired capacity: %v", err)
-			return err
-		}
-
-		return nil
-	})
-
-	return
+	return c.Cloud.ScaleUpASG(ctx, desiredCapacity)
 }
 
 func (c *Controller) workerDrainSet(ctx context.Context, workerID string, drain bool) (worker *Worker, err error) {

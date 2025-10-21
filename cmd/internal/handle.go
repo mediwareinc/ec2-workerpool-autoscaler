@@ -15,7 +15,13 @@ func Handle(ctx context.Context, logger *slog.Logger, tracer internal.Tracer) er
 		return fmt.Errorf("could not parse environment variables: %w", err)
 	}
 
-	controller, err := internal.NewController(ctx, &cfg, tracer)
+	// Create cloud controller
+	cloudController, err := internal.NewAWSCloudController(ctx, cfg.AutoscalingRegion, cfg.AutoscalingGroupARN, tracer)
+	if err != nil {
+		return fmt.Errorf("could not create cloud controller: %w", err)
+	}
+
+	controller, err := internal.NewController(ctx, &cfg, cloudController, tracer)
 	if err != nil {
 		return fmt.Errorf("could not create controller: %w", err)
 	}

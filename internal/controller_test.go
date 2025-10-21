@@ -45,12 +45,15 @@ func TestController(t *testing.T) {
 			mockSpacelift = &ifaces.MockSpacelift{}
 
 			sut = &internal.Controller{
-				Autoscaling:             mockAutoscaling,
-				EC2:                     mockEC2,
-				Spacelift:               mockSpacelift,
-				AWSAutoscalingGroupName: asgName,
-				SpaceliftWorkerPoolID:   workerPoolID,
-				Tracer:                  internal.NewNoOpTracer(),
+				Cloud: &internal.AWSCloudController{
+					Autoscaling: mockAutoscaling,
+					EC2:         mockEC2,
+					ASGName:     asgName,
+					Tracer:      internal.NewNoOpTracer(),
+				},
+				Spacelift:             mockSpacelift,
+				SpaceliftWorkerPoolID: workerPoolID,
+				Tracer:                internal.NewNoOpTracer(),
 			}
 		})
 
