@@ -87,58 +87,22 @@ func (c *GCPCloudController) Close() error {
 	return nil
 }
 
-// getInstanceNameFromID retrieves the instance name by listing all instances and matching by ID.
-func (c *GCPCloudController) getInstanceNameFromID(ctx context.Context, instanceID string) (string, error) {
-	// List all instances in the zone to find the one with the matching ID
-	req := &computepb.ListInstancesRequest{
-		Project: c.Project,
-		Zone:    c.Zone,
-	}
-
-	instances, err := c.InstancesClient.ListAll(ctx, req)
-	if err != nil {
-		return "", fmt.Errorf("error listing instances: %w", err)
-	}
-
-	for _, instance := range instances {
-		if instance.Id != nil && strconv.FormatUint(*instance.Id, 10) == instanceID {
-			if instance.Name == nil {
-				return "", fmt.Errorf("instance with ID %s has no name", instanceID)
-			}
-			return *instance.Name, nil
-		}
-	}
-
-	return "", fmt.Errorf("instance with ID %s not found", instanceID)
-}
-
 // DescribeInstances returns the details of the given instances from GCP,
 // making sure that the instances are valid for further processing.
 // The instanceIDs parameter contains numeric instance IDs.
 func (c *GCPCloudController) DescribeInstances(ctx context.Context, instanceIDs []string) (instances []Instance, err error) {
 	c.Tracer.Capture(ctx, "gcp.compute.describeInstances", func(ctx context.Context) error {
 		for _, instanceID := range instanceIDs {
-			// First, find the instance name from the numeric ID
-			instanceName, nameErr := c.getInstanceNameFromID(ctx, instanceID)
-			if nameErr != nil {
-				err = fmt.Errorf("could not find instance name for ID %s: %w", instanceID, nameErr)
-				return err
-			}
 
 			req := &computepb.GetInstanceRequest{
 				Project:  c.Project,
 				Zone:     c.Zone,
-				Instance: instanceName,
+				Instance: instanceID,
 			}
 
 			instance, getErr := c.InstancesClient.Get(ctx, req)
 			if getErr != nil {
 				err = fmt.Errorf("could not get instance %s: %w", instanceID, getErr)
-				return err
-			}
-
-			if instance.Id == nil {
-				err = fmt.Errorf("could not find instance ID for %s", instanceName)
 				return err
 			}
 
@@ -283,19 +247,20 @@ func (c *GCPCloudController) KillInstance(ctx context.Context, instanceID string
 	c.Tracer.Capture(ctx, "gcp.killinstance", func(ctx context.Context) error {
 		c.Tracer.AddAnnotation(ctx, "instance_id", instanceID)
 
-		// First, find the instance name from the numeric ID
-		instanceName, nameErr := c.getInstanceNameFromID(ctx, instanceID)
-		if nameErr != nil {
-			// If we can't find the instance by ID, it might already be deleted
-			if strings.Contains(nameErr.Error(), "not found") {
-				return nil
-			}
-			err = fmt.Errorf("could not find instance name for ID %s: %w", instanceID, nameErr)
+		req := &computepb.GetInstanceRequest{
+			Project:  c.Project,
+			Zone:     c.Zone,
+			Instance: instanceID,
+		}
+
+		instance, getErr := c.InstancesClient.Get(ctx, req)
+		if getErr != nil {
+			err = fmt.Errorf("could not get instance %s: %w", instanceID, getErr)
 			return err
 		}
 
 		// Build the full instance URL that GCP expects
-		instanceURL := fmt.Sprintf("zones/%s/instances/%s", c.Zone, instanceName)
+		instanceURL := fmt.Sprintf("zones/%s/instances/%s", c.Zone, *instance.Name)
 
 		// Delete the instance from the managed instance group
 		// This will decrease the target size
@@ -317,7 +282,7 @@ func (c *GCPCloudController) KillInstance(ctx context.Context, instanceID string
 				directDeleteReq := &computepb.DeleteInstanceRequest{
 					Project:  c.Project,
 					Zone:     c.Zone,
-					Instance: instanceName,
+					Instance: instanceID,
 				}
 
 				directOp, directErr := c.InstancesClient.Delete(ctx, directDeleteReq)
@@ -419,4 +384,9 @@ func (c *GCPCloudController) ScaleUpASG(ctx context.Context, desiredCapacity int
 	})
 
 	return
+}
+
+// GetTracer returns the tracer instance for this cloud controller.
+func (c *GCPCloudController) GetTracer() Tracer {
+	return c.Tracer
 }

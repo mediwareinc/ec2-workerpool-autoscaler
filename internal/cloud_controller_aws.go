@@ -240,3 +240,8 @@ func (c *AWSCloudController) ScaleUpASG(ctx context.Context, desiredCapacity int
 
 	return
 }
+
+// Tracer returns the tracer instance for this cloud controller.
+func (c *AWSCloudController) GetTracer() Tracer {
+	return c.Tracer
+}

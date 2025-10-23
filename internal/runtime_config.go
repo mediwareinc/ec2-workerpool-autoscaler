@@ -59,3 +59,24 @@ func (c *RuntimeConfig) Validate() error {
 
 	return nil
 }
+
+func (c *RuntimeConfig) GroupKeyAndID() (string, string) {
+	if c.AutoscalingPlatform == "gcp" {
+		return gcpMigKey, c.AutoscalingMIGName
+	}
+	return asgKey, c.AutoscalingGroupARN
+}
+
+func (c *RuntimeConfig) GroupPrefix() string {
+	if c.AutoscalingPlatform == "gcp" {
+		return "mig"
+	}
+	return "asg"
+}
+
+func (c *RuntimeConfig) GroupResource() string {
+	if c.AutoscalingPlatform == "gcp" {
+		return "MIG"
+	}
+	return "ASG"
+}

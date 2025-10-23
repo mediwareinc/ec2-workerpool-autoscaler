@@ -12,6 +12,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.37.0"
 	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/noop"
 )
 
 // OtelTracer is an implementation of the Tracer interface using OpenTelemetry.
@@ -32,7 +33,7 @@ func NewOtelTracer(serviceName string) *OtelTracer {
 func (t *OtelTracer) Configure(config TracerConfig) error {
 	if !config.Enabled {
 		// If tracing is disabled, use a no-op tracer provider
-		otel.SetTracerProvider(trace.NewNoopTracerProvider())
+		otel.SetTracerProvider(noop.NewTracerProvider())
 		t.tracer = otel.Tracer(t.serviceName)
 		return nil
 	}
@@ -103,7 +104,7 @@ func (t *OtelTracer) AddAnnotation(ctx context.Context, key string, value interf
 // Client returns an HTTP client instrumented with OpenTelemetry.
 func (t *OtelTracer) Client(client *http.Client) *http.Client {
 	if client == nil {
-		client = http.DefaultClient
+		client = &http.Client{}
 	}
 
 	// Wrap the transport with OpenTelemetry instrumentation

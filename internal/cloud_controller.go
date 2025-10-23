@@ -23,4 +23,7 @@ type CloudController interface {
 
 	// GetSecret retrieves a secret value from the cloud provider's secret management service.
 	GetSecret(ctx context.Context, secretName string) (string, error)
+
+	// GetTracer returns the tracer instance for this cloud controller.
+	GetTracer() Tracer
 }

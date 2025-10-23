@@ -50,8 +50,9 @@ func NewAutoScaler(controller ControllerInterface, logger *slog.Logger) *AutoSca
 func (s AutoScaler) Scale(ctx context.Context, cfg RuntimeConfig) error {
 	error_count := 0
 
+	groupKey, groupID := cfg.GroupKeyAndID()
 	logger := s.logger.With(
-		"asg_arn", cfg.AutoscalingGroupARN,
+		groupKey, groupID,
 		"worker_pool_id", cfg.SpaceliftWorkerPoolID,
 	)
 
@@ -77,7 +78,7 @@ func (s AutoScaler) Scale(ctx context.Context, cfg RuntimeConfig) error {
 		// decision will be made based on the creation timestamp.
 		instances, err := s.controller.DescribeInstances(ctx, strayInstances)
 		if err != nil {
-			return fmt.Errorf("could not list EC2 instances: %w", err)
+			return fmt.Errorf("could not list instances: %w", err)
 		}
 
 		for _, instance := range instances {
@@ -94,7 +95,7 @@ func (s AutoScaler) Scale(ctx context.Context, cfg RuntimeConfig) error {
 			// Spacelift yet. But if it's been around for a while we will want to kill
 			// it and remove it from the ASG.
 			if instanceAge > 10*time.Minute {
-				logger.Warn("instance has no corresponding worker in Spacelift, removing from the ASG")
+				logger.Warn("instance has no corresponding worker in Spacelift, removing from the " + cfg.GroupResource())
 
 				if err := s.controller.KillInstance(ctx, instance.InstanceID); err != nil {
 					logger.Error("could not kill stray instance: %w", err)
@@ -102,7 +103,7 @@ func (s AutoScaler) Scale(ctx context.Context, cfg RuntimeConfig) error {
 					continue
 				}
 
-				logger.Info("instance successfully removed from the ASG and terminated")
+				logger.Info(fmt.Sprintf("instance successfully removed from the %s and terminated", cfg.GroupResource()))
 			}
 		}
 	}
@@ -110,30 +111,30 @@ func (s AutoScaler) Scale(ctx context.Context, cfg RuntimeConfig) error {
 	decision := state.Decide(cfg.AutoscalingMaxCreate, cfg.AutoscalingMaxKill)
 
 	logger = logger.With(
-		"asg_instances", len(asg.Instances),
-		"asg_desired_capacity", asg.DesiredCapacity,
+		cfg.GroupPrefix()+"_instances", len(asg.Instances),
+		cfg.GroupPrefix()+"_desired_capacity", asg.DesiredCapacity,
 		"scaling_decision_comments", decision.Comments,
 		"spacelift_workers", len(workerPool.Workers),
 		"spacelift_pending_runs", workerPool.PendingRuns,
 	)
 
 	if decision.ScalingDirection == ScalingDirectionNone {
-		logger.Info("not scaling the ASG")
+		logger.Info("not scaling the " + cfg.GroupResource())
 		return nil
 	}
 
 	if decision.ScalingDirection == ScalingDirectionUp {
-		logger.With("instances", decision.ScalingSize).Info("scaling up the ASG")
+		logger.With("instances", decision.ScalingSize).Info("scaling up the " + cfg.GroupResource())
 
 		if err := s.controller.ScaleUpASG(ctx, asg.DesiredCapacity+int32(decision.ScalingSize)); err != nil {
-			return fmt.Errorf("could not scale up ASG: %w", err)
+			return fmt.Errorf("could not scale up %s: %w", cfg.GroupResource(), err)
 		}
 
 		return nil
 	}
 
 	// If we got this far, we're scaling down.
-	logger.With("instances", decision.ScalingSize).Info("scaling down ASG")
+	logger.With("instances", decision.ScalingSize).Info("scaling down " + cfg.GroupResource())
 
 	scalableWorkers := state.ScalableWorkers()
 
@@ -146,7 +147,7 @@ func (s AutoScaler) Scale(ctx context.Context, cfg RuntimeConfig) error {
 			"worker_id", worker.ID,
 			"instance_id", instanceID,
 		)
-		logger.Info("scaling down ASG and killing worker")
+		logger.Info(fmt.Sprintf("scaling down %s and killing worker", cfg.GroupResource()))
 
 		drained, err := s.controller.DrainWorker(ctx, worker.ID)
 		if err != nil {
