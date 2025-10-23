@@ -49,6 +49,8 @@ func TestGCPCloudController(t *testing.T) {
 				Project:                  project,
 				Zone:                     zone,
 				ManagedInstanceGroupName: migName,
+				MinSize:                  0,
+				MaxSize:                  10,
 				Tracer:                   internal.NewNoOpTracer(),
 			}
 		})
@@ -59,23 +61,11 @@ func TestGCPCloudController(t *testing.T) {
 
 			var instances []internal.Instance
 
-			var listInput *computepb.ListInstancesRequest
-			var listCall *mock.Call
 			var getInput *computepb.GetInstanceRequest
 			var getCall *mock.Call
 
 			g.BeforeEach(func() {
-				listInput = nil
 				getInput = nil
-
-				listCall = mockInstances.On(
-					"ListAll",
-					mock.Anything,
-					mock.MatchedBy(func(in any) bool {
-						listInput = in.(*computepb.ListInstancesRequest)
-						return true
-					}),
-				)
 
 				getCall = mockInstances.On(
 					"Get",
@@ -91,131 +81,66 @@ func TestGCPCloudController(t *testing.T) {
 				instances, err = sut.DescribeInstances(ctx, instanceIDs)
 			})
 
-			g.Describe("when the list API call fails", func() {
-				g.BeforeEach(func() { listCall.Return(nil, errors.New("bacon")) })
+			g.Describe("when the get API call fails", func() {
+				g.BeforeEach(func() { getCall.Return(nil, errors.New("ham")) })
 
-				g.It("sends the correct list input", func() {
-					Expect(listInput).NotTo(BeNil())
-					Expect(listInput.Project).To(Equal(project))
-					Expect(listInput.Zone).To(Equal(zone))
+				g.It("sends the correct get input", func() {
+					Expect(getInput).NotTo(BeNil())
+					Expect(getInput.Project).To(Equal(project))
+					Expect(getInput.Zone).To(Equal(zone))
+					Expect(getInput.Instance).To(Equal("1234567890"))
 				})
 
 				g.It("should return an error", func() {
 					Expect(instances).To(BeEmpty())
 					Expect(err).To(HaveOccurred())
-					Expect(err.Error()).To(ContainSubstring("could not find instance name"))
-					Expect(err.Error()).To(ContainSubstring("bacon"))
+					Expect(err.Error()).To(ContainSubstring("could not get instance"))
+					Expect(err.Error()).To(ContainSubstring("ham"))
 				})
 			})
 
-			g.Describe("when the list API call succeeds", func() {
-				var listOutput []*computepb.Instance
+			g.Describe("when the get API call succeeds", func() {
+				var getInstance *computepb.Instance
 
 				g.BeforeEach(func() {
 					id := uint64(1234567890)
-					listOutput = []*computepb.Instance{
-						{
-							Id:   &id,
-							Name: &instanceName,
-						},
+					timestamp := time.Now().Format(time.RFC3339)
+					getInstance = &computepb.Instance{
+						Id:                &id,
+						Name:              &instanceName,
+						CreationTimestamp: &timestamp,
 					}
-					listCall.Return(listOutput, nil)
+					getCall.Return(getInstance, nil)
 				})
 
-				g.Describe("when the instance is not found in the list", func() {
-					g.BeforeEach(func() {
-						differentID := uint64(9999999999)
-						listOutput[0].Id = &differentID
-					})
+				g.Describe("when the instance has no creation timestamp", func() {
+					g.BeforeEach(func() { getInstance.CreationTimestamp = nil })
 
 					g.It("should return an error", func() {
 						Expect(instances).To(BeEmpty())
-						Expect(err).To(MatchError("could not find instance name for ID 1234567890: instance with ID 1234567890 not found"))
+						Expect(err).To(MatchError("could not find creation timestamp for instance 1234567890"))
 					})
 				})
 
-				g.Describe("when the instance has no name", func() {
+				g.Describe("when the instance has an invalid timestamp", func() {
 					g.BeforeEach(func() {
-						listOutput[0].Name = nil
-					})
-
-					g.It("should return an error", func() {
-						Expect(instances).To(BeEmpty())
-						Expect(err).To(HaveOccurred())
-						Expect(err.Error()).To(ContainSubstring("has no name"))
-					})
-				})
-
-				g.Describe("when the get API call fails", func() {
-					g.BeforeEach(func() { getCall.Return(nil, errors.New("ham")) })
-
-					g.It("sends the correct get input", func() {
-						Expect(getInput).NotTo(BeNil())
-						Expect(getInput.Project).To(Equal(project))
-						Expect(getInput.Zone).To(Equal(zone))
-						Expect(getInput.Instance).To(Equal(instanceName))
+						invalidTime := "not-a-timestamp"
+						getInstance.CreationTimestamp = &invalidTime
 					})
 
 					g.It("should return an error", func() {
 						Expect(instances).To(BeEmpty())
 						Expect(err).To(HaveOccurred())
-						Expect(err.Error()).To(ContainSubstring("could not get instance"))
-						Expect(err.Error()).To(ContainSubstring("ham"))
+						Expect(err.Error()).To(ContainSubstring("could not parse creation timestamp"))
 					})
 				})
 
-				g.Describe("when the get API call succeeds", func() {
-					var getInstance *computepb.Instance
-
-					g.BeforeEach(func() {
-						id := uint64(1234567890)
-						timestamp := time.Now().Format(time.RFC3339)
-						getInstance = &computepb.Instance{
-							Id:                &id,
-							Name:              &instanceName,
-							CreationTimestamp: &timestamp,
-						}
-						getCall.Return(getInstance, nil)
-					})
-
-					g.Describe("when the instance has no ID", func() {
-						g.BeforeEach(func() { getInstance.Id = nil })
-
-						g.It("should return an error", func() {
-							Expect(instances).To(BeEmpty())
-							Expect(err).To(MatchError("could not find instance ID for test-instance-abc"))
-						})
-					})
-
-					g.Describe("when the instance has no creation timestamp", func() {
-						g.BeforeEach(func() { getInstance.CreationTimestamp = nil })
-
-						g.It("should return an error", func() {
-							Expect(instances).To(BeEmpty())
-							Expect(err).To(MatchError("could not find creation timestamp for instance 1234567890"))
-						})
-					})
-
-					g.Describe("when the instance has an invalid timestamp", func() {
-						g.BeforeEach(func() {
-							invalidTime := "not-a-timestamp"
-							getInstance.CreationTimestamp = &invalidTime
-						})
-
-						g.It("should return an error", func() {
-							Expect(instances).To(BeEmpty())
-							Expect(err).To(HaveOccurred())
-							Expect(err.Error()).To(ContainSubstring("could not parse creation timestamp"))
-						})
-					})
-
-					g.Describe("when the instance has the correct ID and timestamp", func() {
-						g.It("should return the instance", func() {
-							Expect(err).NotTo(HaveOccurred())
-							Expect(instances).To(HaveLen(1))
-							Expect(instances[0].InstanceID).To(Equal("1234567890"))
-							Expect(instances[0].LaunchTime).NotTo(BeZero())
-						})
+				g.Describe("when the instance has the correct ID and timestamp", func() {
+					g.It("should return the instance", func() {
+						Expect(err).NotTo(HaveOccurred())
+						Expect(instances).To(HaveLen(1))
+						Expect(instances[0].InstanceID).To(Equal("1234567890"))
+						Expect(instances[0].LaunchTime).NotTo(BeZero())
 					})
 				})
 			})
@@ -343,6 +268,8 @@ func TestGCPCloudController(t *testing.T) {
 						Expect(err).NotTo(HaveOccurred())
 						Expect(group).NotTo(BeNil())
 						Expect(group.Name).To(Equal(migName))
+						Expect(group.MinSize).To(Equal(int32(0)))
+						Expect(group.MaxSize).To(Equal(int32(10)))
 						Expect(group.DesiredCapacity).To(Equal(int32(3)))
 						Expect(group.Instances).To(HaveLen(2))
 						Expect(group.Instances[0].InstanceID).To(Equal("1111111111"))
@@ -461,17 +388,22 @@ func TestGCPCloudController(t *testing.T) {
 			const instanceID = "1234567890"
 			const instanceName = "test-instance"
 
-			var listCall *mock.Call
+			var getInput *computepb.GetInstanceRequest
+			var getCall *mock.Call
 			var deleteInput *computepb.DeleteInstancesInstanceGroupManagerRequest
 			var deleteCall *mock.Call
 
 			g.BeforeEach(func() {
+				getInput = nil
 				deleteInput = nil
 
-				listCall = mockInstances.On(
-					"ListAll",
+				getCall = mockInstances.On(
+					"Get",
 					mock.Anything,
-					mock.Anything,
+					mock.MatchedBy(func(in any) bool {
+						getInput = in.(*computepb.GetInstanceRequest)
+						return true
+					}),
 				)
 
 				deleteCall = mockInstanceGroupManagers.On(
@@ -486,32 +418,30 @@ func TestGCPCloudController(t *testing.T) {
 
 			g.JustBeforeEach(func() { err = sut.KillInstance(ctx, instanceID) })
 
-			g.Describe("when finding the instance name fails", func() {
-				g.BeforeEach(func() { listCall.Return(nil, errors.New("bacon")) })
+			g.Describe("when getting the instance fails", func() {
+				g.BeforeEach(func() { getCall.Return(nil, errors.New("bacon")) })
+
+				g.It("sends the correct get input", func() {
+					Expect(getInput).NotTo(BeNil())
+					Expect(getInput.Project).To(Equal(project))
+					Expect(getInput.Zone).To(Equal(zone))
+					Expect(getInput.Instance).To(Equal(instanceID))
+				})
 
 				g.It("should return an error", func() {
 					Expect(err).To(HaveOccurred())
-					Expect(err.Error()).To(ContainSubstring("could not find instance name"))
+					Expect(err.Error()).To(ContainSubstring("could not get instance"))
 					Expect(err.Error()).To(ContainSubstring("bacon"))
 				})
 			})
 
-			g.Describe("when the instance is not found", func() {
-				g.BeforeEach(func() {
-					listCall.Return([]*computepb.Instance{}, nil)
-				})
-
-				g.It("should succeed (instance already deleted)", func() {
-					Expect(err).NotTo(HaveOccurred())
-				})
-			})
-
-			g.Describe("when finding the instance succeeds", func() {
+			g.Describe("when getting the instance succeeds", func() {
 				g.BeforeEach(func() {
 					id := uint64(1234567890)
 					name := instanceName
-					listCall.Return([]*computepb.Instance{
-						{Id: &id, Name: &name},
+					getCall.Return(&computepb.Instance{
+						Id:   &id,
+						Name: &name,
 					}, nil)
 				})
 
@@ -560,7 +490,7 @@ func TestGCPCloudController(t *testing.T) {
 							Expect(directDeleteInput).NotTo(BeNil())
 							Expect(directDeleteInput.Project).To(Equal(project))
 							Expect(directDeleteInput.Zone).To(Equal(zone))
-							Expect(directDeleteInput.Instance).To(Equal(instanceName))
+							Expect(directDeleteInput.Instance).To(Equal(instanceID))
 						})
 
 						g.It("should return an error", func() {

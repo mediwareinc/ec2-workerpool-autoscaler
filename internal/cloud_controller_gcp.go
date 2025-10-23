@@ -23,11 +23,13 @@ type GCPCloudController struct {
 	Project                  string
 	Zone                     string
 	ManagedInstanceGroupName string
+	MinSize                  int32
+	MaxSize                  int32
 	Tracer                   Tracer
 }
 
 // NewGCPCloudController creates a new GCP cloud controller instance.
-func NewGCPCloudController(ctx context.Context, project, zone, migName string, serviceVersion string) (*GCPCloudController, error) {
+func NewGCPCloudController(ctx context.Context, project, zone, migName string, minSize, maxSize int32, serviceVersion string) (*GCPCloudController, error) {
 	// Create and configure OTEL tracer
 	tracer := NewOtelTracer("autoscaler")
 	if err := tracer.Configure(TracerConfig{ServiceVersion: serviceVersion, Enabled: true}); err != nil {
@@ -59,6 +61,8 @@ func NewGCPCloudController(ctx context.Context, project, zone, migName string, s
 		Project:                  project,
 		Zone:                     zone,
 		ManagedInstanceGroupName: migName,
+		MinSize:                  minSize,
+		MaxSize:                  maxSize,
 		Tracer:                   tracer,
 	}, nil
 }
@@ -155,8 +159,8 @@ func (c *GCPCloudController) GetAutoscalingGroup(ctx context.Context) (out *Auto
 		// Convert GCP MIG to generic AutoScalingGroup
 		out = &AutoScalingGroup{
 			Name:            *mig.Name,
-			MinSize:         int32(0),
-			MaxSize:         int32(0),
+			MinSize:         c.MinSize,
+			MaxSize:         c.MaxSize,
 			DesiredCapacity: int32(0),
 			Instances:       []Instance{},
 		}
@@ -164,15 +168,6 @@ func (c *GCPCloudController) GetAutoscalingGroup(ctx context.Context) (out *Auto
 		// Get target size (desired capacity)
 		if mig.TargetSize != nil {
 			out.DesiredCapacity = int32(*mig.TargetSize)
-		}
-
-		// Get autoscaler info if it exists to populate min/max
-		// Note: GCP autoscaler is a separate resource, but we can check the current policy
-		if mig.AutoHealingPolicies != nil {
-			// For now, we'll set min/max to reasonable defaults
-			// In a production system, you might want to query the autoscaler separately
-			out.MinSize = 0
-			out.MaxSize = out.DesiredCapacity * 2 // Conservative estimate
 		}
 
 		// List managed instances

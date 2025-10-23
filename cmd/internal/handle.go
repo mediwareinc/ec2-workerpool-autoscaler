@@ -26,7 +26,7 @@ func Handle(ctx context.Context, logger *slog.Logger, isLocal bool) error {
 			return fmt.Errorf("could not create AWS cloud controller: %w", err)
 		}
 	case "gcp":
-		cloudController, err = internal.NewGCPCloudController(ctx, cfg.AutoscalingMIGProjectID, cfg.AutoscalingMIGZone, cfg.AutoscalingMIGName, "1.2.3")
+		cloudController, err = internal.NewGCPCloudController(ctx, cfg.AutoscalingMIGProjectID, cfg.AutoscalingMIGZone, cfg.AutoscalingMIGName, cfg.AutoscalingMIGMinSize, cfg.AutoscalingMIGMaxSize, "1.2.3")
 		if err != nil {
 			return fmt.Errorf("could not create GCP cloud controller: %w", err)
 		}

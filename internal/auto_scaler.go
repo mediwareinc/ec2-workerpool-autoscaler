@@ -98,7 +98,7 @@ func (s AutoScaler) Scale(ctx context.Context, cfg RuntimeConfig) error {
 				logger.Warn("instance has no corresponding worker in Spacelift, removing from the " + cfg.GroupResource())
 
 				if err := s.controller.KillInstance(ctx, instance.InstanceID); err != nil {
-					logger.Error("could not kill stray instance: %w", err)
+					logger.Error("could not kill stray instance", "error", err)
 					error_count++
 					continue
 				}
@@ -151,7 +151,7 @@ func (s AutoScaler) Scale(ctx context.Context, cfg RuntimeConfig) error {
 
 		drained, err := s.controller.DrainWorker(ctx, worker.ID)
 		if err != nil {
-			logger.Error("could not drain worker: %w", err)
+			logger.Error("could not drain worker", "error", err)
 			error_count++
 			continue
 		}
@@ -162,7 +162,7 @@ func (s AutoScaler) Scale(ctx context.Context, cfg RuntimeConfig) error {
 		}
 
 		if err := s.controller.KillInstance(ctx, string(instanceID)); err != nil {
-			logger.Error("could not kill instance: %w", err)
+			logger.Error("could not kill instance", "error", err)
 			error_count++
 			continue
 		}

@@ -25,6 +25,8 @@ type RuntimeConfig struct {
 	AutoscalingMIGProjectID string `env:"AUTOSCALING_MIG_PROJECT_ID"`
 	AutoscalingMIGZone      string `env:"AUTOSCALING_MIG_ZONE"` // Set if a zonal MIG is used, empty for regional MIGs
 	AutoscalingMIGName      string `env:"AUTOSCALING_MIG_NAME"`
+	AutoscalingMIGMinSize   int32  `env:"AUTOSCALING_MIG_MIN_SIZE" envDefault:"0"`
+	AutoscalingMIGMaxSize   int32  `env:"AUTOSCALING_MIG_MAX_SIZE" envDefault:"2"`
 }
 
 // Parse parses environment variables into the RuntimeConfig.
