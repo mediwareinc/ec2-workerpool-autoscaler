@@ -26,7 +26,13 @@ type AWSCloudController struct {
 }
 
 // NewAWSCloudController creates a new AWS cloud controller instance.
-func NewAWSCloudController(ctx context.Context, region, asgARN string, tracer Tracer) (*AWSCloudController, error) {
+func NewAWSCloudController(ctx context.Context, region, asgARN string, serviceVersion string) (*AWSCloudController, error) {
+	// Create and configure XRay tracer
+	tracer := NewXRayTracer()
+	if err := tracer.Configure(TracerConfig{ServiceVersion: serviceVersion}); err != nil {
+		return nil, fmt.Errorf("could not configure X-Ray: %w", err)
+	}
+
 	// Load AWS configuration
 	awsConfig, err := config.LoadDefaultConfig(ctx, config.WithRegion(region))
 	if err != nil {
