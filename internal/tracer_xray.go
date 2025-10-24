@@ -49,3 +49,9 @@ func (t *XRayTracer) Begin(ctx context.Context, name string) (context.Context, f
 		segment.Close(err)
 	}
 }
+
+// Shutdown gracefully shuts down the X-Ray tracer.
+// X-Ray SDK doesn't require explicit shutdown, so this is a no-op.
+func (t *XRayTracer) Shutdown(ctx context.Context) error {
+	return nil
+}

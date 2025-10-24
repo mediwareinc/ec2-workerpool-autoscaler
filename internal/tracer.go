@@ -32,6 +32,11 @@ type Tracer interface {
 	// Begin starts a new root segment with the given name.
 	// Returns a context with the segment and a function to close the segment.
 	Begin(ctx context.Context, name string) (context.Context, func(error))
+
+	// Shutdown gracefully shuts down the tracer.
+	// This should be called when the application is shutting down to ensure
+	// all traces are flushed and resources are cleaned up.
+	Shutdown(ctx context.Context) error
 }
 
 // TracerConfig holds configuration for the tracer.

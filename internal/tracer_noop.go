@@ -41,3 +41,8 @@ func (t *NoOpTracer) Configure(config TracerConfig) error {
 func (t *NoOpTracer) Begin(ctx context.Context, name string) (context.Context, func(error)) {
 	return ctx, func(error) {}
 }
+
+// Shutdown does nothing and returns nil.
+func (t *NoOpTracer) Shutdown(ctx context.Context) error {
+	return nil
+}
