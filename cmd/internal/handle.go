@@ -40,6 +40,13 @@ func Handle(ctx context.Context, logger *slog.Logger, isLocal bool) error {
 		defer closeSegment(err)
 	}
 
+	defer func() {
+		err := cloudController.Shutdown(ctx)
+		if err != nil {
+			logger.Error("error during cloud controller shutdown", "error", err)
+		}
+	}()
+
 	controller, err := internal.NewController(ctx, &cfg, cloudController, cloudController.GetTracer())
 	if err != nil {
 		return fmt.Errorf("could not create controller: %w", err)

@@ -241,6 +241,12 @@ func (c *AWSCloudController) ScaleUpASG(ctx context.Context, desiredCapacity int
 	return
 }
 
+// Shutdown performs cleanup operations for the cloud controller.
+// AWS SDK v2 clients do not require explicit cleanup.
+func (c *AWSCloudController) Shutdown(ctx context.Context) error {
+	return c.Tracer.Shutdown(ctx)
+}
+
 // Tracer returns the tracer instance for this cloud controller.
 func (c *AWSCloudController) GetTracer() Tracer {
 	return c.Tracer

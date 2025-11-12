@@ -2,6 +2,7 @@ package internal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -20,6 +21,7 @@ type OtelTracer struct {
 	tracer         trace.Tracer
 	tracerProvider *sdktrace.TracerProvider
 	serviceName    string
+	shutdownFuncs  []func(context.Context) error
 }
 
 // NewOtelTracer creates a new OtelTracer instance with the given service name.
@@ -60,6 +62,9 @@ func (t *OtelTracer) Configure(config TracerConfig) error {
 		// For example:
 		// sdktrace.WithBatcher(otlptrace.New(ctx, exporter)),
 	)
+
+	// Register the tracer provider shutdown function
+	t.shutdownFuncs = append(t.shutdownFuncs, t.tracerProvider.Shutdown)
 
 	// Set as global tracer provider
 	otel.SetTracerProvider(t.tracerProvider)
@@ -128,10 +133,12 @@ func (t *OtelTracer) Begin(ctx context.Context, name string) (context.Context, f
 // Shutdown gracefully shuts down the tracer provider.
 // This should be called when the application is shutting down.
 func (t *OtelTracer) Shutdown(ctx context.Context) error {
-	if t.tracerProvider != nil {
-		return t.tracerProvider.Shutdown(ctx)
+	var err error
+	for _, shutdown := range t.shutdownFuncs {
+		err = errors.Join(err, shutdown(ctx))
 	}
-	return nil
+	t.shutdownFuncs = nil
+	return err
 }
 
 // convertToAttribute converts a value to an OpenTelemetry attribute.

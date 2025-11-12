@@ -2,6 +2,7 @@ package internal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -26,67 +27,68 @@ type GCPCloudController struct {
 	MinSize                  int32
 	MaxSize                  int32
 	Tracer                   Tracer
+	closeFuncs               []func() error
+	shutdownFuncs            []func(context.Context) error
 }
 
 // NewGCPCloudController creates a new GCP cloud controller instance.
 func NewGCPCloudController(ctx context.Context, project, zone, migName string, minSize, maxSize int32, serviceVersion string) (*GCPCloudController, error) {
-	// Create and configure OTEL tracer
-	tracer := NewOtelTracer("autoscaler")
-	if err := tracer.Configure(TracerConfig{ServiceVersion: serviceVersion, Enabled: true}); err != nil {
-		return nil, fmt.Errorf("could not configure OpenTelemetry: %w", err)
-	}
-
-	instancesClient, err := compute.NewInstancesRESTClient(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("could not create GCP instances client: %w", err)
-	}
-
-	instanceGroupManagersClient, err := compute.NewInstanceGroupManagersRESTClient(ctx)
-	if err != nil {
-		instancesClient.Close()
-		return nil, fmt.Errorf("could not create GCP instance group managers client: %w", err)
-	}
-
-	secretManagerClient, err := secretmanager.NewClient(ctx)
-	if err != nil {
-		instancesClient.Close()
-		instanceGroupManagersClient.Close()
-		return nil, fmt.Errorf("could not create GCP secret manager client: %w", err)
-	}
-
-	return &GCPCloudController{
-		InstancesClient:          NewGCPInstancesWrapper(instancesClient),
-		InstanceGroupManagers:    NewGCPInstanceGroupManagersWrapper(instanceGroupManagersClient),
-		SecretManagerClient:      secretManagerClient,
+	c := &GCPCloudController{
 		Project:                  project,
 		Zone:                     zone,
 		ManagedInstanceGroupName: migName,
 		MinSize:                  minSize,
 		MaxSize:                  maxSize,
-		Tracer:                   tracer,
-	}, nil
+	}
+
+	// Create and configure OTEL tracer
+	c.Tracer = NewOtelTracer("autoscaler")
+	if err := c.Tracer.Configure(TracerConfig{ServiceVersion: serviceVersion, Enabled: true}); err != nil {
+		return nil, fmt.Errorf("could not configure OpenTelemetry: %w", err)
+	}
+	c.shutdownFuncs = append(c.shutdownFuncs, c.Tracer.Shutdown)
+
+	instancesClient, err := compute.NewInstancesRESTClient(ctx)
+	if err != nil {
+		err = errors.Join(err, c.Shutdown(ctx))
+		return nil, fmt.Errorf("could not create GCP instances client: %w", err)
+	}
+	c.InstancesClient = NewGCPInstancesWrapper(instancesClient)
+	c.closeFuncs = append(c.closeFuncs, instancesClient.Close)
+
+	instanceGroupManagersClient, err := compute.NewInstanceGroupManagersRESTClient(ctx)
+	if err != nil {
+		err = errors.Join(err, c.Shutdown(ctx))
+		return nil, fmt.Errorf("could not create GCP instance group managers client: %w", err)
+	}
+	c.InstanceGroupManagers = NewGCPInstanceGroupManagersWrapper(instanceGroupManagersClient)
+	c.closeFuncs = append(c.closeFuncs, instanceGroupManagersClient.Close)
+
+	c.SecretManagerClient, err = secretmanager.NewClient(ctx)
+	if err != nil {
+		err = errors.Join(err, c.Shutdown(ctx))
+		return nil, fmt.Errorf("could not create GCP secret manager client: %w", err)
+	}
+	c.closeFuncs = append(c.closeFuncs, c.SecretManagerClient.Close)
+
+	return c, nil
 }
 
-// Close closes the GCP clients.
-func (c *GCPCloudController) Close() error {
-	var errs []error
-	if c.InstancesClient != nil {
-		if err := c.InstancesClient.Close(); err != nil {
-			errs = append(errs, err)
-		}
+// Shutdown closes the GCP clients and shuts down the tracer.
+func (c *GCPCloudController) Shutdown(ctx context.Context) error {
+	var err error
+	for _, close := range c.closeFuncs {
+		err = errors.Join(err, close())
 	}
-	if c.InstanceGroupManagers != nil {
-		if err := c.InstanceGroupManagers.Close(); err != nil {
-			errs = append(errs, err)
-		}
+	c.closeFuncs = nil
+
+	for _, shutdown := range c.shutdownFuncs {
+		err = errors.Join(err, shutdown(ctx))
 	}
-	if c.SecretManagerClient != nil {
-		if err := c.SecretManagerClient.Close(); err != nil {
-			errs = append(errs, err)
-		}
-	}
-	if len(errs) > 0 {
-		return fmt.Errorf("errors closing GCP clients: %v", errs)
+	c.shutdownFuncs = nil
+
+	if err != nil {
+		return fmt.Errorf("errors shutting down GCPCloudController: %w", err)
 	}
 	return nil
 }

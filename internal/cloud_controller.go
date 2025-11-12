@@ -26,4 +26,7 @@ type CloudController interface {
 
 	// GetTracer returns the tracer instance for this cloud controller.
 	GetTracer() Tracer
+
+	// Shutdown performs cleanup operations for the cloud controller.
+	Shutdown(ctx context.Context) error
 }
