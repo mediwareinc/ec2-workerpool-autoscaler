@@ -25,6 +25,7 @@ type RuntimeConfig struct {
 	AutoscalingCapacitySanityCheck       int  `env:"AUTOSCALING_CAPACITY_SANITY_CHECK" envDefault:"10"`
 	AutoscalingTargetUtilizationPercent  int  `env:"AUTOSCALING_TARGET_UTILIZATION_PERCENT" envDefault:"100"`
 	AutoscalingScaleDownDelayUseIdleTime bool `env:"AUTOSCALING_SCALE_DOWN_DELAY_USE_IDLE_TIME" envDefault:"false"`
+	AutoscalingSharedPool                bool `env:"AUTOSCALING_SHARED_POOL" envDefault:"false"`
 
 	// AWS-specific fields - use awsEnv tag
 	AutoscalingGroupARN string `awsEnv:"AUTOSCALING_GROUP_ARN,notEmpty"`
