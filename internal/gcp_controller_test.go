@@ -23,7 +23,7 @@ const (
 	gcpZone         = "us-central1-a"
 	gcpRegion       = "us-central1"
 	gcpIGMName      = "my-mig"
-	gcpIGMID  = "projects/my-project/zones/us-central1-a/instanceGroupManagers/my-mig"
+	gcpIGMID        = "projects/my-project/zones/us-central1-a/instanceGroupManagers/my-mig"
 )
 
 // Helper function to create a pointer to a value
@@ -63,7 +63,7 @@ func setupGCPController(t *testing.T, isRegional bool) (*internal.GCPController,
 		Project:    gcpProject,
 		Location:   location,
 		IGMName:    gcpIGMName,
-		IGMID: gcpIGMID,
+		IGMID:      gcpIGMID,
 		IsRegional: isRegional,
 		MinSize:    0,
 		MaxSize:    10,
@@ -450,5 +450,3 @@ func TestGCPScaleUpASG_Success_NoError(t *testing.T) {
 
 	require.NoError(t, err)
 }
-
-

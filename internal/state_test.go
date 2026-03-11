@@ -660,6 +660,250 @@ func TestDecide_WaitingForIdleWorkers_NoScaling(t *testing.T) {
 	require.ElementsMatch(t, []string{"autoscaling group exactly at the right size"}, decision.Comments)
 }
 
+func TestNewState_ForeignWorker_SharedPool_SkipsWorker(t *testing.T) {
+	asg := &internal.AutoScalingGroup{
+		Name:            "mig-a",
+		MinSize:         0,
+		MaxSize:         5,
+		DesiredCapacity: 0,
+	}
+	workerPool := &internal.WorkerPool{
+		Workers: []internal.Worker{{
+			ID: "worker-from-mig-b",
+			Metadata: mustJSON(map[string]any{
+				"asg_id":      "mig-b",
+				"instance_id": "i-foreign",
+			}),
+		}},
+	}
+	cfg := internal.RuntimeConfig{
+		AutoscalingSharedPool: true,
+	}
+
+	state, err := internal.NewState(workerPool, asg, cfg, testLogger(), testIdentifier)
+
+	require.NoError(t, err)
+	require.NotNil(t, state)
+	require.Equal(t, 0, state.ValidWorkerCount(), "foreign worker should be skipped")
+}
+
+func TestNewState_MixedWorkers_SharedPool_CountsOnlyLocal(t *testing.T) {
+	const asgName = "mig-a"
+	asg := &internal.AutoScalingGroup{
+		Name:            asgName,
+		MinSize:         0,
+		MaxSize:         10,
+		DesiredCapacity: 2,
+		Instances: []internal.Instance{
+			{ID: "i-local-1", LifecycleState: internal.LifecycleStateInService},
+			{ID: "i-local-2", LifecycleState: internal.LifecycleStateInService},
+		},
+	}
+	workerPool := &internal.WorkerPool{
+		Workers: []internal.Worker{
+			{
+				ID: "local-worker-1",
+				Metadata: mustJSON(map[string]any{
+					"asg_id":      asgName,
+					"instance_id": "i-local-1",
+				}),
+			},
+			{
+				ID: "foreign-worker-1",
+				Metadata: mustJSON(map[string]any{
+					"asg_id":      "mig-b",
+					"instance_id": "i-foreign-1",
+				}),
+			},
+			{
+				ID: "local-worker-2",
+				Metadata: mustJSON(map[string]any{
+					"asg_id":      asgName,
+					"instance_id": "i-local-2",
+				}),
+			},
+			{
+				ID: "foreign-worker-2",
+				Metadata: mustJSON(map[string]any{
+					"asg_id":      "mig-b",
+					"instance_id": "i-foreign-2",
+				}),
+			},
+		},
+	}
+	cfg := internal.RuntimeConfig{
+		AutoscalingSharedPool: true,
+	}
+
+	state, err := internal.NewState(workerPool, asg, cfg, testLogger(), testIdentifier)
+
+	require.NoError(t, err)
+	require.Equal(t, 2, state.ValidWorkerCount(), "only local workers should be counted")
+}
+
+func TestNewState_AllForeignWorkers_SharedPool_ZeroValid(t *testing.T) {
+	asg := &internal.AutoScalingGroup{
+		Name:            "mig-a",
+		MinSize:         0,
+		MaxSize:         5,
+		DesiredCapacity: 0,
+	}
+	workerPool := &internal.WorkerPool{
+		Workers: []internal.Worker{
+			{
+				ID: "foreign-1",
+				Metadata: mustJSON(map[string]any{
+					"asg_id":      "mig-b",
+					"instance_id": "i-foreign-1",
+				}),
+			},
+			{
+				ID: "foreign-2",
+				Metadata: mustJSON(map[string]any{
+					"asg_id":      "mig-c",
+					"instance_id": "i-foreign-2",
+				}),
+			},
+		},
+	}
+	cfg := internal.RuntimeConfig{
+		AutoscalingSharedPool: true,
+	}
+
+	state, err := internal.NewState(workerPool, asg, cfg, testLogger(), testIdentifier)
+
+	require.NoError(t, err)
+	require.Equal(t, 0, state.ValidWorkerCount())
+}
+
+func TestScalableWorkers_ExcludesForeignWorkers(t *testing.T) {
+	const asgName = "mig-a"
+	asg := &internal.AutoScalingGroup{
+		Name:            asgName,
+		MinSize:         0,
+		MaxSize:         10,
+		DesiredCapacity: 3,
+		Instances: []internal.Instance{
+			{ID: "i-local-1", LifecycleState: internal.LifecycleStateInService},
+			{ID: "i-local-2", LifecycleState: internal.LifecycleStateInService},
+			{ID: "i-local-3", LifecycleState: internal.LifecycleStateInService},
+		},
+	}
+	workerPool := &internal.WorkerPool{
+		Workers: []internal.Worker{
+			{
+				ID:   "local-idle",
+				Busy: false,
+				Metadata: mustJSON(map[string]any{
+					"asg_id":      asgName,
+					"instance_id": "i-local-1",
+				}),
+			},
+			{
+				ID:   "foreign-idle",
+				Busy: false,
+				Metadata: mustJSON(map[string]any{
+					"asg_id":      "mig-b",
+					"instance_id": "i-foreign-1",
+				}),
+			},
+			{
+				ID:   "local-busy",
+				Busy: true,
+				Metadata: mustJSON(map[string]any{
+					"asg_id":      asgName,
+					"instance_id": "i-local-2",
+				}),
+			},
+			{
+				ID:   "local-idle-2",
+				Busy: false,
+				Metadata: mustJSON(map[string]any{
+					"asg_id":      asgName,
+					"instance_id": "i-local-3",
+				}),
+			},
+		},
+	}
+	cfg := internal.RuntimeConfig{
+		AutoscalingSharedPool: true,
+	}
+
+	state, err := internal.NewState(workerPool, asg, cfg, testLogger(), testIdentifier)
+	require.NoError(t, err)
+
+	scalable := state.ScalableWorkers()
+
+	require.Len(t, scalable, 2)
+	require.Equal(t, "local-idle", scalable[0].ID, "should preserve oldest-first ordering")
+	require.Equal(t, "local-idle-2", scalable[1].ID)
+}
+
+func TestDecide_WithForeignWorkers_ScalesUpCorrectly(t *testing.T) {
+	const asgName = "mig-a"
+	asg := &internal.AutoScalingGroup{
+		Name:            asgName,
+		MinSize:         0,
+		MaxSize:         10,
+		DesiredCapacity: 2,
+		Instances: []internal.Instance{
+			{ID: "i-local-1", LifecycleState: internal.LifecycleStateInService},
+			{ID: "i-local-2", LifecycleState: internal.LifecycleStateInService},
+		},
+	}
+	workerPool := &internal.WorkerPool{
+		PendingRuns: 5,
+		Workers: []internal.Worker{
+			{
+				ID:   "local-1",
+				Busy: true,
+				Metadata: mustJSON(map[string]any{
+					"asg_id":      asgName,
+					"instance_id": "i-local-1",
+				}),
+			},
+			{
+				ID:   "local-2",
+				Busy: true,
+				Metadata: mustJSON(map[string]any{
+					"asg_id":      asgName,
+					"instance_id": "i-local-2",
+				}),
+			},
+			{
+				ID:   "foreign-1",
+				Busy: false,
+				Metadata: mustJSON(map[string]any{
+					"asg_id":      "mig-b",
+					"instance_id": "i-foreign-1",
+				}),
+			},
+			{
+				ID:   "foreign-2",
+				Busy: false,
+				Metadata: mustJSON(map[string]any{
+					"asg_id":      "mig-b",
+					"instance_id": "i-foreign-2",
+				}),
+			},
+		},
+	}
+	cfg := internal.RuntimeConfig{
+		AutoscalingSharedPool: true,
+	}
+
+	state, err := internal.NewState(workerPool, asg, cfg, testLogger(), testIdentifier)
+	require.NoError(t, err)
+
+	// validWorkerCount=2 matches len(Instances)=2, so Decide proceeds.
+	// Both local workers are busy, so scalable=0.
+	// difference = pendingRuns(5) - scalable(0) = 5
+	decision := state.Decide(10, 2)
+
+	require.Equal(t, internal.ScalingDirectionUp, decision.ScalingDirection)
+	require.Equal(t, 5, decision.ScalingSize, "should scale based on local workers only, ignoring foreign idle workers")
+}
+
 func nullable[T any](t T) *T {
 	out := t
 	return &out

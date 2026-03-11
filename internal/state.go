@@ -28,6 +28,9 @@ type InstanceIdentifier interface {
 	InstanceIdentity(worker *Worker) (groupID GroupID, instanceID InstanceID, err error)
 }
 
+// NewState constructs State from a worker pool and autoscaling group.
+// When cfg.AutoscalingSharedPool is true, workerPool.Workers is modified
+// to exclude workers belonging to other scaling groups.
 func NewState(workerPool *WorkerPool, asg *AutoScalingGroup, cfg RuntimeConfig, logger *slog.Logger, identifier InstanceIdentifier) (*State, error) {
 	workersByInstanceID := make(map[InstanceID]Worker)
 	inServiceInstanceIDs := make(map[InstanceID]struct{})
@@ -50,8 +53,21 @@ func NewState(workerPool *WorkerPool, asg *AutoScalingGroup, cfg RuntimeConfig, 
 		return nil, fmt.Errorf("ASG desired capacity is not set")
 	}
 
+	filtered := make([]Worker, 0, len(workerPool.Workers))
+
 	for _, worker := range workerPool.Workers {
 		groupID, instanceID, err := identifier.InstanceIdentity(&worker)
+
+		// If we can positively identify this worker as belonging to another
+		// scaling group, skip it (shared pool) or error (single pool).
+		if err == nil && string(groupID) != "" && string(groupID) != asg.Name {
+			if !cfg.AutoscalingSharedPool {
+				return nil, fmt.Errorf("worker %s has incorrect ASG: %s (expected: %s)", worker.ID, groupID, asg.Name)
+			}
+			continue
+		}
+
+		filtered = append(filtered, worker)
 
 		if err != nil {
 			logger.Warn("worker has invalid metadata, will treat as stray instance",
@@ -66,13 +82,16 @@ func NewState(workerPool *WorkerPool, asg *AutoScalingGroup, cfg RuntimeConfig, 
 			continue
 		}
 
-		if string(groupID) != asg.Name {
-			return nil, fmt.Errorf("worker %s has incorrect ASG: %s (expected: %s)", worker.ID, groupID, asg.Name)
-		}
-
 		workersByInstanceID[instanceID] = worker
 		validWorkerCount++
 	}
+
+	if skipped := len(workerPool.Workers) - len(filtered); skipped > 0 {
+		logger.Info("skipped workers from other scaling groups",
+			"skipped_count", skipped,
+			"expected_group", asg.Name)
+	}
+	workerPool.Workers = filtered
 
 	for _, instance := range asg.Instances {
 		if instance.LifecycleState != LifecycleStateInService {

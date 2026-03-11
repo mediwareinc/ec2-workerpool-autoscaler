@@ -47,13 +47,13 @@ type GCPController struct {
 	Instances ifaces.GCPInstances // Instance operations (always zonal)
 
 	// Configuration.
-	Project     string
-	Location    string // Zone for zonal IGMs, region for regional IGMs
-	IGMName     string
-	IGMID string // e.g., projects/{project}/zones/{zone}/instanceGroupManagers/{name}
-	IsRegional  bool
-	MinSize     uint
-	MaxSize     uint
+	Project    string
+	Location   string // Zone for zonal IGMs, region for regional IGMs
+	IGMName    string
+	IGMID      string // e.g., projects/{project}/zones/{zone}/instanceGroupManagers/{name}
+	IsRegional bool
+	MinSize    uint
+	MaxSize    uint
 }
 
 // igmID holds parsed components of an IGM resource ID.
@@ -111,13 +111,13 @@ func NewGCPController(ctx context.Context, cfg *RuntimeConfig) (ControllerInterf
 	}
 
 	ctrl := &GCPController{
-		Project:     parsedIGM.Project,
-		Location:    parsedIGM.Location,
-		IGMName:     parsedIGM.Name,
-		IGMID: cfg.GCPIGMID,
-		IsRegional:  parsedIGM.IsRegional,
-		MinSize:     cfg.AutoscalingMinSize,
-		MaxSize:     cfg.AutoscalingMaxSize,
+		Project:    parsedIGM.Project,
+		Location:   parsedIGM.Location,
+		IGMName:    parsedIGM.Name,
+		IGMID:      cfg.GCPIGMID,
+		IsRegional: parsedIGM.IsRegional,
+		MinSize:    cfg.AutoscalingMinSize,
+		MaxSize:    cfg.AutoscalingMaxSize,
 	}
 
 	// Fetch Spacelift API key from Secret Manager (client is only needed during initialization)
