@@ -1,0 +1,6 @@
+terraform {
+  backend "gcs" {
+    bucket = "{{ state_bucket }}"
+    prefix = "{{ state_prefix }}/{{ project_suffix }}/{{ org_domain }}/ec2-workerpool-autoscaler/dr/autoscaler-image"
+  }
+}
