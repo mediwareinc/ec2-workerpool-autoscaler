@@ -1,0 +1,10 @@
+tf_modules:
+  - path: dr/autoscaler-image
+    stage: 5
+    depends_on:
+      - terraform-gcp-wellsky-org/core-projects/org-prod-images
+    var_files:
+      - dr.tfvars
+    env:
+      GOOGLE_BILLING_PROJECT: "{{ billing_project }}"
+      USER_PROJECT_OVERRIDE: "true"
